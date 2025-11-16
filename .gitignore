@@ -1,0 +1,22 @@
+# Visual Studio / .NET
+bin/
+obj/
+*.user
+*.suo
+*.VC.db
+*.VC.VC.opendb
+.vs/
+*.pdb
+*.exe
+*.dll
+*.cache
+*.log
+
+# Rider / JetBrains
+.idea/
+
+# VS Code
+.vscode/
+
+# Build outputs
+publish/
