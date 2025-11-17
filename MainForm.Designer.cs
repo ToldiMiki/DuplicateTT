@@ -19,20 +19,13 @@ namespace SmartpageTimetableDuplicateV1
         {
             this.lblServerLoad = new System.Windows.Forms.Label();
             this.cmbServerLoad = new System.Windows.Forms.ComboBox();
-            this.lblLoadAuth = new System.Windows.Forms.Label();
-            this.txtLoadAuth = new System.Windows.Forms.TextBox();
-            this.lblLoadSession = new System.Windows.Forms.Label();
-            this.txtLoadSession = new System.Windows.Forms.TextBox();
             this.lblLoadId = new System.Windows.Forms.Label();
             this.txtLoadId = new System.Windows.Forms.TextBox();
             this.btnLoad = new System.Windows.Forms.Button();
 
             this.lblServerSave = new System.Windows.Forms.Label();
             this.cmbServerSave = new System.Windows.Forms.ComboBox();
-            this.lblSaveAuth = new System.Windows.Forms.Label();
-            this.txtSaveAuth = new System.Windows.Forms.TextBox();
-            this.lblSaveSession = new System.Windows.Forms.Label();
-            this.txtSaveSession = new System.Windows.Forms.TextBox();
+            
             this.lblSaveName = new System.Windows.Forms.Label();
             this.txtSaveName = new System.Windows.Forms.TextBox();
             this.btnSave = new System.Windows.Forms.Button();
@@ -57,15 +50,7 @@ namespace SmartpageTimetableDuplicateV1
             this.cmbServerLoad.Size = new System.Drawing.Size(inputWidth, 23);
             this.cmbServerLoad.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
 
-            this.lblLoadAuth.Text = "Auth token:";
-            this.lblLoadAuth.Location = new System.Drawing.Point(leftColX, startY + spacingY);
-            this.txtLoadAuth.Location = new System.Drawing.Point(leftColX + labelWidth, startY + spacingY - 3);
-            this.txtLoadAuth.Size = new System.Drawing.Size(inputWidth, 23);
-
-            this.lblLoadSession.Text = "Session ID:";
-            this.lblLoadSession.Location = new System.Drawing.Point(leftColX, startY + spacingY * 2);
-            this.txtLoadSession.Location = new System.Drawing.Point(leftColX + labelWidth, startY + spacingY * 2 - 3);
-            this.txtLoadSession.Size = new System.Drawing.Size(inputWidth, 23);
+            // auth/session controls removed from Load column
 
             this.lblLoadId.Text = "Elem ID:";
             this.lblLoadId.Location = new System.Drawing.Point(leftColX, startY + spacingY * 3);
@@ -84,15 +69,7 @@ namespace SmartpageTimetableDuplicateV1
             this.cmbServerSave.Size = new System.Drawing.Size(inputWidth, 23);
             this.cmbServerSave.DropDownStyle = System.Windows.Forms.ComboBoxStyle.DropDownList;
 
-            this.lblSaveAuth.Text = "Auth token:";
-            this.lblSaveAuth.Location = new System.Drawing.Point(rightColX, startY + spacingY);
-            this.txtSaveAuth.Location = new System.Drawing.Point(rightColX + labelWidth, startY + spacingY - 3);
-            this.txtSaveAuth.Size = new System.Drawing.Size(inputWidth, 23);
-
-            this.lblSaveSession.Text = "Session ID:";
-            this.lblSaveSession.Location = new System.Drawing.Point(rightColX, startY + spacingY * 2);
-            this.txtSaveSession.Location = new System.Drawing.Point(rightColX + labelWidth, startY + spacingY * 2 - 3);
-            this.txtSaveSession.Size = new System.Drawing.Size(inputWidth, 23);
+            // auth/session controls removed from Save column
 
             this.lblSaveName.Text = "Új név:";
             this.lblSaveName.Location = new System.Drawing.Point(rightColX, startY + spacingY * 3);
@@ -106,34 +83,35 @@ namespace SmartpageTimetableDuplicateV1
 
             // --- ALSÓ RÉSZ ---
             // JSON mező: az ablak aljáig méretezhető
-            this.txtJson.Font = new System.Drawing.Font("Consolas", 9F);
             this.txtJson.Location = new System.Drawing.Point(15, 200);
-            this.txtJson.Multiline = true;
-            this.txtJson.ScrollBars = System.Windows.Forms.ScrollBars.Both;
             this.txtJson.Size = new System.Drawing.Size(760, 420);
-            this.txtJson.Anchor = (System.Windows.Forms.AnchorStyles.Top
-                                 | System.Windows.Forms.AnchorStyles.Bottom
-                                 | System.Windows.Forms.AnchorStyles.Left
-                                 | System.Windows.Forms.AnchorStyles.Right);
+            this.txtJson.Multiline = true;
+            this.txtJson.Font = new System.Drawing.Font("Consolas", 9F);
+            this.txtJson.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
+            this.txtStatus.Anchor = (System.Windows.Forms.AnchorStyles.Left
+                                   | System.Windows.Forms.AnchorStyles.Right
+                                   | System.Windows.Forms.AnchorStyles.Top
+                                   | System.Windows.Forms.AnchorStyles.Bottom);
 
             // Status mező: fix alul, mindig a helyén
             this.txtStatus.Location = new System.Drawing.Point(15, 630);
+            this.txtStatus.Size = new System.Drawing.Size(760, 170);
             this.txtStatus.Multiline = true;
             this.txtStatus.ReadOnly = true;
-            this.txtStatus.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
-            this.txtStatus.Size = new System.Drawing.Size(760, 80);
-            this.txtStatus.Anchor = (System.Windows.Forms.AnchorStyles.Bottom
+            this.txtStatus.ScrollBars = System.Windows.Forms.ScrollBars.Both;
+            this.txtStatus.Anchor = (System.Windows.Forms.AnchorStyles.Top
+                                   | System.Windows.Forms.AnchorStyles.Bottom
                                    | System.Windows.Forms.AnchorStyles.Left
                                    | System.Windows.Forms.AnchorStyles.Right);
 
             // --- FORM BEÁLLÍTÁSOK ---
-            this.ClientSize = new System.Drawing.Size(800, 760);
-            this.MinimumSize = new System.Drawing.Size(800, 760);
+            this.ClientSize = new System.Drawing.Size(800, 810);
+            this.MinimumSize = new System.Drawing.Size(800, 810);
             this.Controls.AddRange(new System.Windows.Forms.Control[]
             {
-                lblServerLoad, cmbServerLoad, lblLoadAuth, txtLoadAuth, lblLoadSession, txtLoadSession,
+                lblServerLoad, cmbServerLoad,
                 lblLoadId, txtLoadId, btnLoad,
-                lblServerSave, cmbServerSave, lblSaveAuth, txtSaveAuth, lblSaveSession, txtSaveSession,
+                lblServerSave, cmbServerSave,
                 lblSaveName, txtSaveName, btnSave,
                 txtJson, txtStatus
             });
@@ -148,20 +126,14 @@ namespace SmartpageTimetableDuplicateV1
 
         private System.Windows.Forms.Label lblServerLoad;
         private System.Windows.Forms.ComboBox cmbServerLoad;
-        private System.Windows.Forms.Label lblLoadAuth;
-        private System.Windows.Forms.TextBox txtLoadAuth;
-        private System.Windows.Forms.Label lblLoadSession;
-        private System.Windows.Forms.TextBox txtLoadSession;
+        // auth/session controls removed
         private System.Windows.Forms.Label lblLoadId;
         private System.Windows.Forms.TextBox txtLoadId;
         private System.Windows.Forms.Button btnLoad;
 
         private System.Windows.Forms.Label lblServerSave;
         private System.Windows.Forms.ComboBox cmbServerSave;
-        private System.Windows.Forms.Label lblSaveAuth;
-        private System.Windows.Forms.TextBox txtSaveAuth;
-        private System.Windows.Forms.Label lblSaveSession;
-        private System.Windows.Forms.TextBox txtSaveSession;
+        // auth/session controls removed
         private System.Windows.Forms.Label lblSaveName;
         private System.Windows.Forms.TextBox txtSaveName;
         private System.Windows.Forms.Button btnSave;
