@@ -22,6 +22,7 @@ namespace SmartpageTimetableDuplicateV1
         // Results after successful authentication
         public string? AuthToken { get; private set; }
         public string? SessionId { get; private set; }
+    public string? Username { get; private set; }
 
         private readonly Dictionary<string, string> _authUrls = new()
         {
@@ -51,7 +52,7 @@ namespace SmartpageTimetableDuplicateV1
             this.MaximizeBox = false;
             this.MinimizeBox = false;
             this.StartPosition = FormStartPosition.CenterParent;
-            this.Size = new Size(300, 250);
+            this.Size = new Size(310, 210);
 
             // Label for username
             Label lblUsername = new Label
@@ -118,6 +119,9 @@ namespace SmartpageTimetableDuplicateV1
         {
             TextBox? txtUsername = this.Controls["txtUsername"] as TextBox;
             TextBox? txtPassword = this.Controls["txtPassword"] as TextBox;
+
+            // Store the username for later retrieval
+            Username = txtUsername?.Text.Trim();
 
             if (txtUsername == null || txtPassword == null)
             {
