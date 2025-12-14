@@ -14,7 +14,11 @@ namespace SmartpageTimetableDuplicateV1
 {
     public partial class MainForm : Form
     {
-        private readonly HttpClient _httpClient = new HttpClient();
+        private readonly HttpClientHandler _httpClientHandler = new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
+        };
+        private readonly HttpClient _httpClient;
         private TimetableItem? _loadedItem;
         private List<RasterFontInfo> _rasterFontsLoad = new List<RasterFontInfo>();
         private List<RasterFontInfo> _rasterFontsSave = new List<RasterFontInfo>();
@@ -43,6 +47,7 @@ namespace SmartpageTimetableDuplicateV1
 
         public MainForm()
         {
+            _httpClient = new HttpClient(_httpClientHandler);
             InitializeComponent();
 
             // --- dropdown alapértékek ---
@@ -458,7 +463,7 @@ namespace SmartpageTimetableDuplicateV1
                 }
                 string baseUrl = GetSelectedBaseUrl(cmbServerLoad);
 
-                string id = txtLoadId.Text.Trim();
+                string id = txtLoadTTId.Text.Trim();
                 string token = _loadAuth?.Trim() ?? "";
                 string session = _loadSession?.Trim() ?? "";
 

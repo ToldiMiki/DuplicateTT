@@ -20,8 +20,10 @@ namespace SmartpageTimetableDuplicateV1
             this.lblServerLoad = new System.Windows.Forms.Label();
             this.cmbServerLoad = new System.Windows.Forms.ComboBox();
             this.txtLoadUsername = new System.Windows.Forms.TextBox();
-            this.lblLoadId = new System.Windows.Forms.Label();
-            this.txtLoadId = new System.Windows.Forms.TextBox();
+            this.lblLoadTTId = new System.Windows.Forms.Label();
+            this.txtLoadTTId = new System.Windows.Forms.TextBox();
+            this.lblLoadSlideId = new System.Windows.Forms.Label();
+            this.txtLoadSlideId = new System.Windows.Forms.TextBox();
             this.btnLoad = new System.Windows.Forms.Button();
 
             this.lblServerSave = new System.Windows.Forms.Label();
@@ -40,8 +42,8 @@ namespace SmartpageTimetableDuplicateV1
             // --- Koordináták és méretek ---
             int leftColX = 15;
             int rightColX = 400;
-            int labelWidth = 100;
-            int inputWidth = 220;
+            int labelWidth = 115;
+            int inputWidth = 240;
             int spacingY = 30;
             int startY = 15;
 
@@ -61,13 +63,18 @@ namespace SmartpageTimetableDuplicateV1
             this.txtLoadUsername.Size = new System.Drawing.Size(inputWidth, 23);
             this.txtLoadUsername.ReadOnly = true;
 
-            this.lblLoadId.Text = "Elem ID:";
-            this.lblLoadId.Location = new System.Drawing.Point(leftColX, startY + spacingY * 2);
-            this.txtLoadId.Location = new System.Drawing.Point(leftColX + labelWidth, startY + spacingY * 2 - 3);
-            this.txtLoadId.Size = new System.Drawing.Size(inputWidth, 23);
+            this.lblLoadTTId.Text = "Timetable ID:";
+            this.lblLoadTTId.Location = new System.Drawing.Point(leftColX, startY + spacingY * 2 + 10);
+            this.txtLoadTTId.Location = new System.Drawing.Point(leftColX + labelWidth, startY + spacingY * 2 + 10 - 3);
+            this.txtLoadTTId.Size = new System.Drawing.Size(inputWidth, 23);
+
+            this.lblLoadSlideId.Text = "Slide ID:";
+            this.lblLoadSlideId.Location = new System.Drawing.Point(leftColX, startY + spacingY * 3 + 10);
+            this.txtLoadSlideId.Location = new System.Drawing.Point(leftColX + labelWidth, startY + spacingY * 3 + 10 - 3);
+            this.txtLoadSlideId.Size = new System.Drawing.Size(inputWidth, 23);
 
             this.btnLoad.Text = "Elem beolvasása";
-            this.btnLoad.Location = new System.Drawing.Point(leftColX, startY + spacingY * 3 + 5);
+            this.btnLoad.Location = new System.Drawing.Point(leftColX, startY + spacingY * 4 + 10);
             this.btnLoad.Size = new System.Drawing.Size(labelWidth + inputWidth, 35);
             this.btnLoad.Click += new System.EventHandler(this.btnLoad_Click);
 
@@ -88,19 +95,21 @@ namespace SmartpageTimetableDuplicateV1
             this.txtSaveUsername.ReadOnly = true;
 
             this.lblSaveName.Text = "Új név:";
-            this.lblSaveName.Location = new System.Drawing.Point(rightColX, startY + spacingY * 2);
-            this.txtSaveName.Location = new System.Drawing.Point(rightColX + labelWidth, startY + spacingY * 2 - 3);
-            this.txtSaveName.Size = new System.Drawing.Size(inputWidth, 23);
+            this.lblSaveName.Location = new System.Drawing.Point(rightColX, startY + spacingY * 2 + 15 + 10);
+            this.lblSaveName.Size = new System.Drawing.Size(labelWidth - 60, 23);
+
+            this.txtSaveName.Location = new System.Drawing.Point(rightColX + labelWidth - 60, startY + spacingY * 2 + 15 + 10 - 3);
+            this.txtSaveName.Size = new System.Drawing.Size(inputWidth + 60, 23);
 
             this.btnSave.Text = "Elem mentése";
-            this.btnSave.Location = new System.Drawing.Point(rightColX, startY + spacingY * 3 + 5);
+            this.btnSave.Location = new System.Drawing.Point(rightColX, startY + spacingY * 4 + 10);
             this.btnSave.Size = new System.Drawing.Size(labelWidth + inputWidth, 35);
             this.btnSave.Click += new System.EventHandler(this.btnSave_Click);
 
             // --- ALSÓ RÉSZ ---
             // JSON mező: az ablak aljáig méretezhető
-            this.txtJson.Location = new System.Drawing.Point(15, 170);
-            this.txtJson.Size = new System.Drawing.Size(760, 420);
+            this.txtJson.Location = new System.Drawing.Point(15, 210);
+            this.txtJson.Size = new System.Drawing.Size(760, 380);
             this.txtJson.Multiline = true;
             this.txtJson.Font = new System.Drawing.Font("Consolas", 9F);
             this.txtJson.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
@@ -126,7 +135,7 @@ namespace SmartpageTimetableDuplicateV1
             this.Controls.AddRange(new System.Windows.Forms.Control[]
             {
                 lblServerLoad, cmbServerLoad, lblLoadUsername, txtLoadUsername,
-                lblLoadId, txtLoadId, btnLoad,
+                lblLoadTTId, txtLoadTTId, lblLoadSlideId, txtLoadSlideId, btnLoad,
                 lblServerSave, cmbServerSave, lblSaveUsername, txtSaveUsername,
                 lblSaveName, txtSaveName, btnSave,
                 txtJson, txtStatus
@@ -144,8 +153,10 @@ namespace SmartpageTimetableDuplicateV1
         private System.Windows.Forms.ComboBox cmbServerLoad;
         private System.Windows.Forms.Label lblLoadUsername;
         private System.Windows.Forms.TextBox txtLoadUsername;
-        private System.Windows.Forms.Label lblLoadId;
-        private System.Windows.Forms.TextBox txtLoadId;
+        private System.Windows.Forms.Label lblLoadTTId;
+        private System.Windows.Forms.TextBox txtLoadTTId;
+        private System.Windows.Forms.Label lblLoadSlideId;
+        private System.Windows.Forms.TextBox txtLoadSlideId;
         private System.Windows.Forms.Button btnLoad;
 
         private System.Windows.Forms.Label lblServerSave;

@@ -39,7 +39,8 @@ namespace SmartpageTimetableDuplicateV1
             _httpClientHandler = new HttpClientHandler
             {
                 UseCookies = true,
-                CookieContainer = new System.Net.CookieContainer()
+                CookieContainer = new System.Net.CookieContainer(),
+                ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
             };
             InitializeComponent();
             SetupUI();
