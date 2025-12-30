@@ -17,7 +17,6 @@ namespace SmartpageTimetableDuplicateV1
     {
         private string _serverKey; // "DEV", "DEMO", or "PROD"
         private HttpClientHandler _httpClientHandler;
-        private HttpClient _httpClient;
 
         // Results after successful authentication
         public string? AuthToken { get; private set; }
@@ -31,10 +30,9 @@ namespace SmartpageTimetableDuplicateV1
             { "PROD", "https://smartpage.hclinear.hu/auth-server-backend/api/v1/auth" }
         };
 
-        public LoginDialog(string serverKey, HttpClient httpClient)
+        public LoginDialog(string serverKey)
         {
             _serverKey = serverKey;
-            _httpClient = httpClient;
             // We'll create a new handler that manages cookies automatically
             _httpClientHandler = new HttpClientHandler
             {
