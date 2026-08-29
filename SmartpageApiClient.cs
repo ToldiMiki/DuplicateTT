@@ -28,7 +28,9 @@ namespace SmartpageTimetableDuplicateV1
                 if (!resp.IsSuccessStatusCode)
                 {
                     string err = await resp.Content.ReadAsStringAsync();
-                    return ApiResult<List<T>>.Fail($"{resp.StatusCode} - {err}");
+                    // A szerver strukturált, magyar hibaüzeneteit kibontva adjuk tovább, hogy a
+                    // felhasználó ne nyers JSON-t lásson a státuszmezőben.
+                    return ApiResult<List<T>>.Fail(ApiErrorFormatter.Format(resp.StatusCode, err));
                 }
 
                 string body = await resp.Content.ReadAsStringAsync();

@@ -125,5 +125,11 @@ namespace SmartpageTimetableDuplicateV1.Models
 
         [JsonPropertyName("exactTimeperiod")]
         public int ExactTimeperiod { get; set; }
+
+        // A backend minden cellán visszaadja; e nélkül a mező a másolatból kimaradt, és a
+        // szerver alapértéke (0) lépett a helyébe - vagyis a másolt tábla máskor jelölt késést,
+        // mint az eredeti.
+        [JsonPropertyName("delayThreshold")]
+        public int DelayThreshold { get; set; }
     }
 }

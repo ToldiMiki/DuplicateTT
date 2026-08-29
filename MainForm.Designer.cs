@@ -33,6 +33,7 @@ namespace SmartpageTimetableDuplicateV1
             this.lblSaveName = new System.Windows.Forms.Label();
             this.txtSaveName = new System.Windows.Forms.TextBox();
             this.btnSave = new System.Windows.Forms.Button();
+            this.chkDryRun = new System.Windows.Forms.CheckBox();
 
             this.txtStatus = new System.Windows.Forms.RichTextBox();
             this.txtJson = new System.Windows.Forms.TextBox();
@@ -103,6 +104,14 @@ namespace SmartpageTimetableDuplicateV1
             this.txtSaveName.Location = new System.Drawing.Point(rightColX + labelWidth - 60, startY + spacingY * 2 + 15 + 10 - 3);
             this.txtSaveName.Size = new System.Drawing.Size(inputWidth + 60, 23);
 
+            // Száraz futtatás: minden lépés lefut a szerverre íráson kívül, így a küldendő
+            // JSON és az összes figyelmeztetés ellenőrizhető, mielőtt bármi megváltozna.
+            this.chkDryRun.Text = "Száraz futtatás (nem ír a szerverre)";
+            // A névmező alja 120-nál, a Mentés gomb teteje 145-nél van - a jelölőnégyzet ebbe a résbe kerül.
+            this.chkDryRun.Location = new System.Drawing.Point(rightColX, startY + spacingY * 3 + 17);
+            this.chkDryRun.Size = new System.Drawing.Size(labelWidth + inputWidth, 22);
+            this.chkDryRun.ForeColor = System.Drawing.Color.FromArgb(60, 60, 120);
+
             this.btnSave.Text = "Elem mentése";
             this.btnSave.Location = new System.Drawing.Point(rightColX, startY + spacingY * 4 + 10);
             this.btnSave.Size = new System.Drawing.Size(labelWidth + inputWidth, 35);
@@ -139,7 +148,7 @@ namespace SmartpageTimetableDuplicateV1
                 lblServerLoad, cmbServerLoad, lblLoadUsername, txtLoadUsername,
                 lblLoadEntityType, cmbLoadEntityType, lblLoadEntityId, txtLoadEntityId, btnLoad,
                 lblServerSave, cmbServerSave, lblSaveUsername, txtSaveUsername,
-                lblSaveName, txtSaveName, btnSave,
+                lblSaveName, txtSaveName, chkDryRun, btnSave,
                 txtJson, txtStatus
             });
 
@@ -167,6 +176,7 @@ namespace SmartpageTimetableDuplicateV1
         private System.Windows.Forms.TextBox txtSaveUsername;
         private System.Windows.Forms.Label lblSaveName;
         private System.Windows.Forms.TextBox txtSaveName;
+        private System.Windows.Forms.CheckBox chkDryRun;
         private System.Windows.Forms.Button btnSave;
 
         private System.Windows.Forms.RichTextBox txtStatus;
