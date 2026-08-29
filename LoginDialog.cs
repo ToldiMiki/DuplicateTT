@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Net.Http;
+using System.Net.Security;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -38,7 +39,11 @@ namespace SmartpageTimetableDuplicateV1
             {
                 UseCookies = true,
                 CookieContainer = new System.Net.CookieContainer(),
-                ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
+                // Csak az ismerten hibás tanúsítványú DEV szervernél hagyjuk figyelmen kívül a
+                // TLS-hibát; DEMO/PROD ellen a bejelentkezés a rendes tanúsítvány-ellenőrzéssel megy.
+                ServerCertificateCustomValidationCallback = (request, cert, chain, sslPolicyErrors) =>
+                    sslPolicyErrors == SslPolicyErrors.None ||
+                    string.Equals(_serverKey, "DEV", StringComparison.OrdinalIgnoreCase)
             };
             InitializeComponent();
             SetupUI();
