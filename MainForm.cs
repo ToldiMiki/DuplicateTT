@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Net.Http;
+using System.Net.Security;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -16,12 +17,20 @@ namespace SmartpageTimetableDuplicateV1
 {
     public partial class MainForm : Form
     {
+        // Ismert host, aminek jelenleg lejárt/hibás a tanúsítványa - csak ennél kerüljük meg az
+        // ellenőrzést; minden más szervernél a rendes TLS-validáció fut.
+        private const string CertBypassHost = "smartpage-dev.hclinear.hu";
+
         private readonly HttpClientHandler _httpClientHandler = new HttpClientHandler
         {
-            ServerCertificateCustomValidationCallback = (sender, cert, chain, sslPolicyErrors) => true
+            ServerCertificateCustomValidationCallback = (request, cert, chain, sslPolicyErrors) =>
+                sslPolicyErrors == SslPolicyErrors.None ||
+                string.Equals(request.RequestUri?.Host, CertBypassHost, StringComparison.OrdinalIgnoreCase)
         };
         private HttpClient _httpClientLoad;
         private HttpClient _httpClientSave;
+        private SmartpageApiClient? _loadApi;
+        private SmartpageApiClient? _saveApi;
         private TimetableItem? _loadedTimetableItem;
         private LayoutItem? _loadedLayoutItem;
         private List<LayoutItems>? _loadedLayoutItems;
@@ -65,8 +74,8 @@ namespace SmartpageTimetableDuplicateV1
 
         public MainForm()
         {
-            _httpClientLoad = new HttpClient(_httpClientHandler);
-            _httpClientSave = new HttpClient(_httpClientHandler);
+            _httpClientLoad = new HttpClient(_httpClientHandler, disposeHandler: false);
+            _httpClientSave = new HttpClient(_httpClientHandler, disposeHandler: false);
             InitializeComponent();
 
             // --- dropdown alapértékek ---
@@ -108,6 +117,15 @@ namespace SmartpageTimetableDuplicateV1
             txtStatus.ScrollToCaret();
         }
 
+        private static void ApplyAuthHeaders(HttpClient client, string? auth, string? session)
+        {
+            client.DefaultRequestHeaders.Clear();
+            if (!string.IsNullOrEmpty(auth))
+                client.DefaultRequestHeaders.Add("Authorization", $"Bearer {auth}");
+            if (!string.IsNullOrEmpty(session))
+                client.DefaultRequestHeaders.Add("sessionid", session);
+        }
+
         private async void CmbServer_SelectedIndexChanged(object? sender, EventArgs e)
         {
             if (sender == null)
@@ -138,13 +156,10 @@ namespace SmartpageTimetableDuplicateV1
                         txtLoadUsername.Text = _loadUsername;
                         SetStatus($"✅ Bejelentkezés sikeres a {serverKey} (Load) szerverre.", Color.ForestGreen);
 
-                        // Set headers and base URLsfor Load client
-                        _httpClientLoad.DefaultRequestHeaders.Clear();
-                        if (!string.IsNullOrEmpty(_loadAuth))
-                            _httpClientLoad.DefaultRequestHeaders.Add("Authorization", $"Bearer {_loadAuth}");
-                        if (!string.IsNullOrEmpty(_loadSession))
-                            _httpClientLoad.DefaultRequestHeaders.Add("sessionid", _loadSession);
+                        // Set headers and base URL for Load client
+                        ApplyAuthHeaders(_httpClientLoad, _loadAuth, _loadSession);
                         _baseLoadUrl = _baseUrls[serverKey];
+                        _loadApi = new SmartpageApiClient(_httpClientLoad, _baseLoadUrl);
 
                         // Automatically copy Load credentials to Save server (without showing login dialog)
                         _isAutoCopyingCredentials = true;
@@ -153,8 +168,15 @@ namespace SmartpageTimetableDuplicateV1
                         _saveUsername = _loadUsername;
                         cmbServerSave.SelectedItem = serverKey;
                         txtSaveUsername.Text = _saveUsername;
-                        _httpClientSave = _httpClientLoad;
+
+                        // Fontos: a Save kliens mindig saját, önálló HttpClient-példány (csak a
+                        // handlert - és így a TLS-beállítást - osztja meg a Load kliensével).
+                        // Ha ugyanaz a példány lenne, egy későbbi, eltérő szerverre való Save
+                        // bejelentkezés törölné/felülírná a Load kliens fejléceit is.
+                        _httpClientSave = new HttpClient(_httpClientHandler, disposeHandler: false);
+                        ApplyAuthHeaders(_httpClientSave, _saveAuth, _saveSession);
                         _baseSaveUrl = _baseLoadUrl;
+                        _saveApi = new SmartpageApiClient(_httpClientSave, _baseSaveUrl);
 
                         _isAutoCopyingCredentials = false;
                         SetStatus($"✅ Bejelentkezési adatok automatikusan másolva a Save szerverre ({serverKey}).", Color.ForestGreen);
@@ -167,13 +189,11 @@ namespace SmartpageTimetableDuplicateV1
                         txtSaveUsername.Text = _saveUsername;
                         SetStatus($"✅ Bejelentkezés sikeres a {serverKey} (Save) szerverre.", Color.ForestGreen);
 
-                        // Set headers for Save client
-                        _httpClientSave.DefaultRequestHeaders.Clear();
-                        if (!string.IsNullOrEmpty(_saveAuth))
-                            _httpClientSave.DefaultRequestHeaders.Add("Authorization", $"Bearer {_saveAuth}");
-                        if (!string.IsNullOrEmpty(_saveSession))
-                            _httpClientSave.DefaultRequestHeaders.Add("sessionid", _saveSession);
+                        // Set headers for Save client - biztonságos, mert _httpClientSave mindig
+                        // önálló példány, sosem ugyanaz az objektum, mint _httpClientLoad.
+                        ApplyAuthHeaders(_httpClientSave, _saveAuth, _saveSession);
                         _baseSaveUrl = _baseUrls[serverKey];
+                        _saveApi = new SmartpageApiClient(_httpClientSave, _baseSaveUrl);
                     }
                 }
                 else
@@ -207,28 +227,25 @@ namespace SmartpageTimetableDuplicateV1
         private record AnchorYItem(int Id, string Label);
         private record TextColorItem(int Id, string Label);
 
+        // A tényleges HTTP GET + JSON-értelmezés a UI-mentes SmartpageApiClient-ben történik;
+        // ez a metódus csak a Load/Save oldal kiválasztását és a hibaüzenet státuszsorba
+        // írását végzi.
         private async Task<List<T>?> LoadListAsync<T>(string endpoint, bool fromLoadServer, Func<string, List<T>?> customDeserializer)
         {
-            string key = fromLoadServer ? cmbServerLoad.SelectedItem?.ToString() ?? "DEV" : cmbServerSave.SelectedItem?.ToString() ?? "DEV";
-            string fullEndpoint = $"{_baseUrls[key]}/{endpoint}";
-            HttpClient client = fromLoadServer ? _httpClientLoad : _httpClientSave;
-            try
+            var api = fromLoadServer ? _loadApi : _saveApi;
+            if (api == null)
             {
-                HttpResponseMessage resp = await client.GetAsync(fullEndpoint);
-                if (!resp.IsSuccessStatusCode)
-                {
-                    string err = await resp.Content.ReadAsStringAsync();
-                    SetStatus($"❌ Hiba {endpoint}: {resp.StatusCode} - {err}", Color.Red);
-                    return null;
-                }
-                string body = await resp.Content.ReadAsStringAsync();
-                return customDeserializer(body);
-            }
-            catch (Exception ex)
-            {
-                SetStatus($"❌ Hiba {endpoint} betöltéskor: {ex.Message}", Color.Red);
+                SetStatus($"❌ Hiba {endpoint}: nincs bejelentkezve a {(fromLoadServer ? "Load" : "Save")} szerverre.", Color.Red);
                 return null;
             }
+
+            var result = await api.LoadListAsync(endpoint, customDeserializer);
+            if (!result.Success)
+            {
+                SetStatus($"❌ Hiba {endpoint}: {result.Error}", Color.Red);
+                return null;
+            }
+            return result.Value;
         }
 
         private async Task LoadDictionaryAsync<T>(string itemName, bool fromLoadServer, string endpoint, Func<string, List<T>?> deserializer, Action<Dictionary<int, string>> setDict, Func<T, int> idSelector, Func<T, string?> labelSelector)
@@ -371,24 +388,6 @@ namespace SmartpageTimetableDuplicateV1
         }
 
 
-        private int? GetRasterFontId(List<RasterFontInfo> list, string ttFontName, int size)
-        {
-            if (list == null || list.Count == 0)
-                return null;
-
-            var match = list.FirstOrDefault(r => string.Equals(r.TtFontName, ttFontName, StringComparison.OrdinalIgnoreCase) && r.Size == size);
-            return match == null ? null : match.Id;
-        }
-
-        private int? GetRasterFontSize(List<RasterFontInfo> list, int id)
-        {
-            if (list == null || list.Count == 0)
-                return null;
-
-            var match = list.FirstOrDefault(r => r.Id == id);
-            return match == null ? null : match.Size;
-        }
-
         private void RemoveIdProperties(JsonNode? node)
         {
             if (node is JsonObject obj)
@@ -414,7 +413,6 @@ namespace SmartpageTimetableDuplicateV1
                     }
                     else if (propName.Equals("displayId", StringComparison.OrdinalIgnoreCase))
                     {
-                        //ConvertDisplayId(kv);
                         ConvertDisplayId1(kv.Value);
                     }
                     else if (propName.Equals("groupIds", StringComparison.OrdinalIgnoreCase))
@@ -479,37 +477,6 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
             {
                 SetStatus($"❌ Hiba: a Load szerveren nincs rasterFontId: {kv.Value}", Color.Red);
                 throw new Exception("Invalid rasterFontId value");
-            }
-        }
-
-        private void ConvertDisplayId(KeyValuePair<string, JsonNode?> kv)
-        {
-            if (kv.Value != null && kv.Value.GetValue<int?>() is int displayId)
-            {
-                var displayLoad = _displaysLoad.FirstOrDefault(d => d.Id == displayId);
-                if (displayLoad == null)
-                {
-                    SetStatus($"❌ Hiba: a Load szerveren nem található a displayId: {displayId}", Color.Red);
-                    throw new Exception("No matching display on Load server");
-                }
-
-                var displaySave = _displaysSave.FirstOrDefault(d => string.Equals(d.Name, displayLoad.Name, StringComparison.OrdinalIgnoreCase));
-                if (displaySave == null)
-                {
-                    SetStatus($"❌ Hiba: a Save szerveren nem található a {displayLoad.Name} kijelző", Color.Red);
-                    throw new Exception("No matching display on Save server");
-                }
-
-                // Frissítse az értéket a Save szerver displayId-jére
-                if (kv.Value is JsonObject parentObj)
-                {
-                    parentObj[kv.Key] = displaySave.Id;
-                }
-            }
-            else
-            {
-                SetStatus($"❌ Hiba: a Load szerveren nincs displayId: {kv.Value}", Color.Red);
-                throw new Exception("Invalid displayId value");
             }
         }
 
@@ -935,7 +902,6 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
                 {
                     nodeObj.Remove("id");
                     nodeObj["name"] = newName;
-                    //ConvertDisplayId(new KeyValuePair<string, JsonNode?>("displayId", nodeObj["displayId"]));
                     ConvertDisplayId1(nodeObj["displayId"]);
                     ConvertGroupIds(nodeObj["groupIds"]);
                 }
@@ -963,8 +929,11 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
                 }
                 //response body contains the saved layout's ID
                 string respBody = await response.Content.ReadAsStringAsync();
-                int layoutId = int.Parse(respBody);
-                //int layoutId = 10155;
+                if (!int.TryParse(respBody.Trim(), out int layoutId))
+                {
+                    SetStatus($"❌ Hiba: a brief mentés nem egy szám ID-t adott vissza: '{respBody}'", Color.Red);
+                    return;
+                }
                 SetStatus($"✅ Az új Layout ID-ja: {layoutId}", Color.ForestGreen);
                 if (layoutId < 10000)
                 {
