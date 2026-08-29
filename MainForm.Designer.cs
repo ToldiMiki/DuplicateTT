@@ -74,7 +74,14 @@ namespace SmartpageTimetableDuplicateV1
             this.lblLoadEntityId.Text = "Entity ID:";
             this.lblLoadEntityId.Location = new System.Drawing.Point(leftColX, startY + spacingY * 3 + 10);
             this.txtLoadEntityId.Location = new System.Drawing.Point(leftColX + labelWidth, startY + spacingY * 3 + 10 - 3);
-            this.txtLoadEntityId.Size = new System.Drawing.Size(inputWidth, 23);
+            this.txtLoadEntityId.Size = new System.Drawing.Size(inputWidth - 90, 23);
+
+            // Tallózás: a szerver adja a listát, nem kell kézzel ID-t gépelni.
+            this.btnPickEntity = new System.Windows.Forms.Button();
+            this.btnPickEntity.Text = "Tallózás…";
+            this.btnPickEntity.Location = new System.Drawing.Point(leftColX + labelWidth + inputWidth - 85, startY + spacingY * 3 + 10 - 4);
+            this.btnPickEntity.Size = new System.Drawing.Size(85, 25);
+            this.btnPickEntity.Click += new System.EventHandler(this.BtnPickEntity_Click);
 
             this.btnLoad.Text = "Elem beolvasása";
             this.btnLoad.Location = new System.Drawing.Point(leftColX, startY + spacingY * 4 + 10);
@@ -124,6 +131,9 @@ namespace SmartpageTimetableDuplicateV1
             this.txtJson.Multiline = true;
             this.txtJson.Font = new System.Drawing.Font("Consolas", 9F);
             this.txtJson.ScrollBars = System.Windows.Forms.ScrollBars.Vertical;
+            // A TextBox alapértelmezett felső határa többsoros módban is 32 767 karakter, és a
+            // levágás nem látszik. Egyetlen layout-elem content mezője ennél nagyobb is lehet.
+            this.txtJson.MaxLength = int.MaxValue;
             this.txtStatus.Anchor = (System.Windows.Forms.AnchorStyles.Left
                                    | System.Windows.Forms.AnchorStyles.Right
                                    | System.Windows.Forms.AnchorStyles.Top
@@ -146,13 +156,14 @@ namespace SmartpageTimetableDuplicateV1
             this.Controls.AddRange(new System.Windows.Forms.Control[]
             {
                 lblServerLoad, cmbServerLoad, lblLoadUsername, txtLoadUsername,
-                lblLoadEntityType, cmbLoadEntityType, lblLoadEntityId, txtLoadEntityId, btnLoad,
+                lblLoadEntityType, cmbLoadEntityType, lblLoadEntityId, txtLoadEntityId, btnPickEntity, btnLoad,
                 lblServerSave, cmbServerSave, lblSaveUsername, txtSaveUsername,
                 lblSaveName, txtSaveName, chkDryRun, btnSave,
                 txtJson, txtStatus
             });
 
-            this.Text = "Smartpage Timetable or Layout Duplicate V2";
+            var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+            this.Text = $"Smartpage Timetable or Layout Duplicate v{version?.ToString(3) ?? "?"}";
             this.StartPosition = System.Windows.Forms.FormStartPosition.CenterScreen;
             this.ResumeLayout(false);
             this.PerformLayout();
@@ -168,6 +179,7 @@ namespace SmartpageTimetableDuplicateV1
         private System.Windows.Forms.ComboBox cmbLoadEntityType;
         private System.Windows.Forms.Label lblLoadEntityId;
         private System.Windows.Forms.TextBox txtLoadEntityId;
+        private System.Windows.Forms.Button btnPickEntity;
         private System.Windows.Forms.Button btnLoad;
 
         private System.Windows.Forms.Label lblServerSave;

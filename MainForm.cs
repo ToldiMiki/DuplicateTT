@@ -65,6 +65,15 @@ namespace SmartpageTimetableDuplicateV1
         // beolvasás és a mentés között eltelhet idő, és a figyelmeztetés kicsúszhat a képből.
         private readonly List<string> _unknownFields = new List<string>();
 
+        // Ténylegesen megváltozott hivatkozások típusonként, a mentés előtti előnézethez.
+        private readonly Dictionary<string, int> _conversions = new Dictionary<string, int>();
+
+        private void NoteConversion(string what)
+        {
+            _conversions.TryGetValue(what, out int count);
+            _conversions[what] = count + 1;
+        }
+
         // In-memory auth/session values (UI fields removed)
         private string? _loadAuth;
         private string? _saveAuth;
@@ -227,6 +236,15 @@ namespace SmartpageTimetableDuplicateV1
                         ApplyAuthHeaders(_httpClientLoad, _loadAuth, _loadSession);
                         _baseLoadUrl = _baseUrls[serverKey];
                         _loadApi = new SmartpageApiClient(_httpClientLoad, _baseLoadUrl);
+
+                        // A Load bejelentkezés csak akkor másolja át magát a Save oldalra, ha ott
+                        // még nincs kiválasztott szerver. Korábban felülírta a már beállított
+                        // célszervert is, így a másolat a forrásra került vissza.
+                        if (cmbServerSave.SelectedIndex != -1)
+                        {
+                            SetStatus($"ℹ️ A Save szerver ({cmbServerSave.SelectedItem}) beállítása megmarad.", Color.DimGray);
+                            return;
+                        }
 
                         // Automatically copy Load credentials to Save server (without showing login dialog)
                         _isAutoCopyingCredentials = true;
@@ -611,6 +629,8 @@ namespace SmartpageTimetableDuplicateV1
                 return false;
             }
 
+            // Csak a tényleges változást számoljuk: egy szerveren belül az ID ugyanaz marad.
+            if (match.Key != loadId) NoteConversion(what);
             itemObj[field] = match.Key;
             return true;
         }
@@ -641,6 +661,7 @@ namespace SmartpageTimetableDuplicateV1
                 return false;
             }
 
+            if (saveEntity.Id != loadId) NoteConversion(what);
             itemObj[field] = saveEntity.Id;
             return true;
         }
@@ -669,6 +690,7 @@ namespace SmartpageTimetableDuplicateV1
                 return false;
             }
 
+            if (saveFont.Id != loadId) NoteConversion("raszterfont");
             itemObj[field] = saveFont.Id;
             return true;
         }
@@ -778,6 +800,81 @@ namespace SmartpageTimetableDuplicateV1
                     return;
                 }
             }
+        }
+
+        /// <summary>
+        /// Elem választása listából. A szerver adja a listát (357 layout, 27 menetrend a PROD2-n),
+        /// így az azonosítót nem kell kézzel begépelni - egy elgépelt ID-ből rossz elem másolása
+        /// lenne, amit csak a JSON-ból lehetne észrevenni.
+        /// </summary>
+        private async void BtnPickEntity_Click(object? sender, EventArgs e)
+        {
+            if (_baseLoadUrl == null)
+            {
+                SetStatus("❌ Hiba: előbb jelentkezz be a Load szerverre!", Color.Red);
+                return;
+            }
+
+            string entityType = cmbLoadEntityType.SelectedItem?.ToString() ?? "Timetable";
+            bool isLayout = entityType == "Layout";
+
+            btnPickEntity.Enabled = false;
+            try
+            {
+                SetStatus($"{entityType} lista betöltése a {cmbServerLoad.SelectedItem} szerverről...", Color.Black);
+                var rows = await LoadPickerRowsAsync(isLayout);
+                if (rows == null || rows.Count == 0)
+                {
+                    SetStatus($"❌ Hiba: a(z) {entityType} lista üres vagy nem érhető el.", Color.Red);
+                    return;
+                }
+
+                using var dialog = new EntityPickerDialog(
+                    $"{entityType} választása - {cmbServerLoad.SelectedItem}",
+                    isLayout ? "Kijelző" : "Méret",
+                    rows);
+
+                if (dialog.ShowDialog(this) == DialogResult.OK)
+                {
+                    txtLoadEntityId.Text = dialog.SelectedId.ToString();
+                    SetStatus($"✅ Kiválasztva: ID={dialog.SelectedId} \"{dialog.SelectedName}\"", Color.ForestGreen);
+                }
+            }
+            finally
+            {
+                btnPickEntity.Enabled = true;
+            }
+        }
+
+        /// <summary>A választólista sorai: a kiegészítő oszlop layoutnál a kijelző, menetrendnél a méret.</summary>
+        private async Task<List<PickerRow>?> LoadPickerRowsAsync(bool isLayout)
+        {
+            string endpoint = isLayout ? "layout/list" : "dynamic-timetable/list";
+            return await LoadListAsync(endpoint, fromLoadServer: true, body =>
+            {
+                if (JsonNode.Parse(body) is not JsonArray root) return null;
+                var rows = new List<PickerRow>();
+                foreach (var item in root)
+                {
+                    if (item is not JsonObject o) continue;
+                    if (o["id"]?.GetValue<int?>() is not int id) continue;
+                    string name = o["name"]?.GetValue<string?>() ?? "";
+
+                    string extra;
+                    if (isLayout)
+                    {
+                        extra = o["displayName"]?.GetValue<string?>() ?? "";
+                    }
+                    else
+                    {
+                        int? width = o["width"]?.GetValue<int?>();
+                        int? height = o["height"]?.GetValue<int?>();
+                        extra = width.HasValue && height.HasValue ? $"{width}×{height}" : "";
+                    }
+                    rows.Add(new PickerRow(id, name, extra));
+                }
+                return rows;
+            });
         }
 
         private async void BtnLoad_Click(object sender, EventArgs e)
@@ -996,20 +1093,26 @@ namespace SmartpageTimetableDuplicateV1
                 return;
             }
 
-            // Utolsó lehetőség a visszalépésre, mielőtt bármit a szerverre írnánk.
-            if (!ConfirmSaveWithUnknownFields())
-            {
-                SetStatus("⛔ A mentés megszakadt a felhasználó kérésére - a szerveren semmi nem változott.", Color.Red);
-                return;
-            }
-
             _skipped.Clear();
+            _conversions.Clear();
             OperationLog.BeginOperation(
                 $"MENTÉS - {cmbLoadEntityType.SelectedItem} \"{txtSaveName.Text.Trim()}\"",
                 serverLoadKey, serverSaveKey, DryRun);
             if (DryRun)
             {
                 SetStatus("🔍 Száraz futtatás: a fordítás lefut, de a szerverre semmi nem íródik.", Color.RoyalBlue);
+            }
+
+            // A gyors, olcsó ellenőrzések előre: ne a listák betöltése után derüljön ki, hogy
+            // üres a név, vagy hogy a név már foglalt.
+            if (string.IsNullOrEmpty(txtSaveName.Text.Trim()))
+            {
+                SetStatus($"❌ Hiba: az új név üres!", Color.Red);
+                return;
+            }
+            if (!await EnsureFreeNameAsync(cmbLoadEntityType.SelectedItem?.ToString() ?? "Timetable"))
+            {
+                return;
             }
 
             var displaysLoad = await LoadDisplaysList(true);  // load displays list from Load server
@@ -1135,9 +1238,8 @@ namespace SmartpageTimetableDuplicateV1
                     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
                 }) ?? "{}";
 
-                // A fordítás lefutott, de még semmit nem írtunk: ha valami kimaradt (tipikusan a
-                // háttérkép eltérő szerverek között), most lehet nemet mondani.
-                if (_skipped.Count > 0 && !ConfirmIncompleteCopy($"{_skipped.Count} hivatkozás"))
+                // A fordítás lefutott, de még semmit nem írtunk: itt lehet megállítani.
+                if (!ConfirmCopy("Timetable", totalItems: 0, copiedItems: 0))
                 {
                     SetStatus("⛔ A mentés megszakadt a felhasználó kérésére - a szerveren semmi nem változott.", Color.Red);
                     return;
@@ -1201,6 +1303,74 @@ namespace SmartpageTimetableDuplicateV1
         }
 
         /// <summary>
+        /// A szerver a nevek egyediségét kikényszeríti (422 - "A megadott érték már szerepel a
+        /// nyilvántartásban!"). Ezt a mentés elején ellenőrizzük, hogy ne a művelet végén derüljön
+        /// ki - főleg a szerveren belüli duplikálásnál, ahol az alapértelmezett név mindig
+        /// ütközik a forráséval.
+        /// </summary>
+        private async Task<bool> EnsureFreeNameAsync(string entityType)
+        {
+            string endpoint = entityType == "Layout" ? "layout/list" : "dynamic-timetable/list";
+            var existing = await LoadNamedListAsync(endpoint, fromLoadServer: false);
+            if (existing == null)
+            {
+                SetStatus("⚠️ A névütközés nem ellenőrizhető (a lista nem érhető el) - a mentés folytatódik.", Color.Orange);
+                return true;
+            }
+
+            string name = txtSaveName.Text.Trim();
+            var clash = existing.FirstOrDefault(e => NameEquals(e.Name, name));
+            if (clash == null) return true;
+
+            string suggestion = SuggestFreeName(name, existing);
+            var answer = MessageBox.Show(this,
+                $"A(z) {cmbServerSave.SelectedItem} szerveren már létezik ilyen nevű elem:\n\n"
+                + $"    ID={clash.Id}   \"{clash.Name}\"\n\n"
+                + "A szerver megköveteli a nevek egyediségét, ezért ezt a mentést elutasítaná.\n\n"
+                + $"Javasolt szabad név:\n\n    \"{suggestion}\"\n\n"
+                + "Igen  - folytatás a javasolt névvel\n"
+                + "Nem  - maradjon az eredeti név (a mentés várhatóan elbukik)\n"
+                + "Mégse  - a mentés megszakítása",
+                "Névütközés",
+                MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button1);
+
+            if (answer == DialogResult.Cancel)
+            {
+                SetStatus("⛔ A mentés megszakadt: a név már foglalt a cél szerveren.", Color.Red);
+                return false;
+            }
+            if (answer == DialogResult.Yes)
+            {
+                txtSaveName.Text = suggestion;
+                SetStatus($"✏️ Az új név: \"{suggestion}\"", Color.RoyalBlue);
+            }
+            else
+            {
+                SetStatus($"⚠️ A név marad \"{name}\" - a szerver ezt várhatóan elutasítja.", Color.Orange);
+            }
+            return true;
+        }
+
+        /// <summary>Szabad nevet keres "név (2)", "név (3)" ... alakban.</summary>
+        private static string SuggestFreeName(string name, List<NamedEntity> existing)
+        {
+            // Ha a név már "... (N)" alakú, a számot növeljük, nem fűzünk hozzá újabb zárójelet.
+            var match = Regex.Match(name, @"^(.*?)\s*\((\d+)\)$");
+            string baseName = match.Success ? match.Groups[1].Value : name;
+            int start = match.Success ? int.Parse(match.Groups[2].Value) + 1 : 2;
+
+            for (int i = start; i < start + 1000; i++)
+            {
+                string candidate = $"{baseName} ({i})";
+                if (!existing.Any(e => NameEquals(e.Name, candidate)))
+                {
+                    return candidate;
+                }
+            }
+            return $"{baseName} ({DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()})";
+        }
+
+        /// <summary>
         /// A félbemaradt layout eltakarítása. A layout/remove kaszkádol az elemekre, tehát egyetlen
         /// hívás elég; külön elem-takarítás nem kell.
         /// </summary>
@@ -1236,20 +1406,73 @@ namespace SmartpageTimetableDuplicateV1
         /// Ha elem maradt ki a fordításból, a felhasználó döntsön: vállalja a hiányos másolatot,
         /// vagy inkább ne jöjjön létre semmi.
         /// </summary>
-        private bool ConfirmIncompleteCopy(string what)
+        /// <summary>
+        /// A mentés előtti előnézet. Ez az egyetlen pont, ahol a művelet még megállítható, ezért
+        /// mindent egy helyen mutat: honnan hova, mi fordult le, és mi marad ki.
+        /// </summary>
+        private bool ConfirmCopy(string entityType, int totalItems, int copiedItems)
         {
-            var answer = MessageBox.Show(this,
-                $"{what} nem másolható át, mert a hivatkozás nem található meg a cél szerveren:\n\n"
-                + FormatFieldList(_skipped)
-                + "\n\nHa folytatja, a másolat ezek nélkül jön létre, tehát eltér az eredetitől.\n\n"
-                + "Folytatja a mentést?\n\n"
-                + "Igen  - mentés a hiányos tartalommal\n"
-                + "Nem  - megszakítás; a szerveren semmi nem jön létre",
-                "Hiányos másolat",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+            var text = new StringBuilder();
 
-            bool proceed = answer == DialogResult.Yes;
-            OperationLog.Status($"[hiányos másolat] a felhasználó döntése: {(proceed ? "folytatás" : "megszakítás")}");
+            text.AppendLine("MIT MÁSOLUNK");
+            text.AppendLine($"   Típus:     {entityType}");
+            text.AppendLine($"   Forrás:    {cmbServerLoad.SelectedItem}  (ID={txtLoadEntityId.Text.Trim()})");
+            text.AppendLine($"   Cél:       {cmbServerSave.SelectedItem}");
+            text.AppendLine($"   Új név:    \"{txtSaveName.Text.Trim()}\"");
+            if (IsSameServer())
+            {
+                text.AppendLine("   Megjegyzés: azonos szerver - az azonosítók változatlanul maradnak.");
+            }
+            text.AppendLine();
+
+            if (totalItems > 0)
+            {
+                text.AppendLine("ELEMEK");
+                text.AppendLine(copiedItems == totalItems
+                    ? $"   mind a(z) {totalItems} elem átkerül"
+                    : $"   {totalItems} elemből {copiedItems} kerül át, {totalItems - copiedItems} kimarad");
+                text.AppendLine();
+            }
+
+            if (_conversions.Count > 0)
+            {
+                text.AppendLine("ÁTFORDÍTOTT HIVATKOZÁSOK (a cél szerver azonosítóira)");
+                foreach (var pair in _conversions.OrderByDescending(p => p.Value))
+                {
+                    text.AppendLine($"   {pair.Key,-24} {pair.Value,3} db");
+                }
+                text.AppendLine();
+            }
+
+            if (_skipped.Count > 0)
+            {
+                text.AppendLine($"KIMARAD ({_skipped.Count} tétel)");
+                foreach (var item in _skipped)
+                {
+                    text.AppendLine($"   • {item}");
+                }
+                text.AppendLine();
+            }
+
+            if (_unknownFields.Count > 0)
+            {
+                text.AppendLine($"ISMERETLEN MEZŐK ({_unknownFields.Count}) - ezek sem kerülnek át");
+                foreach (var field in _unknownFields)
+                {
+                    text.AppendLine($"   • {field}");
+                }
+                text.AppendLine();
+            }
+
+            text.AppendLine(new string('-', 60));
+            text.AppendLine(DryRun
+                ? "SZÁRAZ FUTTATÁS: a szerverre semmi nem íródik, csak a napló készül el."
+                : $"A fentiek a(z) {cmbServerSave.SelectedItem} szerverre íródnak.");
+
+            using var dialog = new CopyPreviewDialog(text.ToString(), DryRun);
+            bool proceed = dialog.ShowDialog(this) == DialogResult.OK;
+
+            OperationLog.Status($"[előnézet] a felhasználó döntése: {(proceed ? "folytatás" : "megszakítás")}");
             return proceed;
         }
 
@@ -1384,9 +1607,8 @@ namespace SmartpageTimetableDuplicateV1
                     }
                 }
 
-                // Itt még semmit nem írtunk a szerverre: ha elem maradt ki, most lehet nemet mondani.
-                int skippedItems = (_loadedLayoutItems?.Count ?? 0) - itemsArray.Count;
-                if (skippedItems > 0 && !ConfirmIncompleteCopy($"{skippedItems} elem"))
+                // Itt még semmit nem írtunk a szerverre: ez az utolsó pont, ahol meg lehet állni.
+                if (!ConfirmCopy("Layout", _loadedLayoutItems?.Count ?? 0, itemsArray.Count))
                 {
                     SetStatus("⛔ A mentés megszakadt a felhasználó kérésére - a szerveren semmi nem változott.", Color.Red);
                     return;
@@ -1542,39 +1764,64 @@ namespace SmartpageTimetableDuplicateV1
             return text;
         }
 
-        /// <summary>
-        /// A mentés előtti utolsó emlékeztető, ha a beolvasáskor ismeretlen mezők voltak. A
-        /// beolvasás óta eltelhetett idő, és a figyelmeztetés kicsúszhatott a státuszmezőből.
-        /// </summary>
-        private bool ConfirmSaveWithUnknownFields()
-        {
-            if (_unknownFields.Count == 0) return true;
-
-            var answer = MessageBox.Show(this,
-                $"A beolvasott elemben {_unknownFields.Count} olyan mező volt, amit ez a program nem ismer:\n\n"
-                + FormatFieldList(_unknownFields)
-                + "\n\nHa most ment, ezek az adatok nem kerülnek át a másolatba.\n\n"
-                + "Folytatja a mentést?",
-                "Ismeretlen mezők - a másolat hiányos lesz",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
-
-            bool proceed = answer == DialogResult.Yes;
-            OperationLog.Status($"[mezőőr] mentés előtti döntés: {(proceed ? "folytatás" : "megszakítás")}");
-            return proceed;
-        }
+        // Base64 tartalmak, amiket nincs értelme a nézőben megmutatni.
+        private static readonly string[] LargeContentFields =
+            { "content", "imageContent", "rasterContent", "file" };
 
         private void DisplayTxtJson(object? obj, bool append = false)
         {
             if (obj == null) return;
-            string json = JsonSerializer.Serialize(obj, new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
-            string shortJson = Regex.Replace(json, "\"(content|imageContent)\":\\s*\"[^\"]*\"", "\"$1\": \"...xxx...\"");
+
+            // A nagy tartalmakat már a fa szintjén cseréljük ki, nem utólag reguláris
+            // kifejezéssel: így nem kell több megabájtos szöveget legenerálni, hogy aztán
+            // kivágjunk belőle. A klón azért kell, hogy a MENTENDŐ fát ne csonkítsuk meg.
+            JsonNode? node = obj is JsonNode existing
+                ? existing.DeepClone()
+                : JsonSerializer.SerializeToNode(obj);
+            if (node == null) return;
+
+            ReplaceLargeContent(node);
+
+            string json = node.ToJsonString(new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            });
+
             if (append)
             {
-                txtJson.AppendText((string.IsNullOrEmpty(txtJson.Text) ? "" : Environment.NewLine) + shortJson);
+                txtJson.AppendText((string.IsNullOrEmpty(txtJson.Text) ? "" : Environment.NewLine) + json);
             }
             else
             {
-                txtJson.Text = shortJson;
+                txtJson.Text = json;
+            }
+        }
+
+        private static void ReplaceLargeContent(JsonNode? node)
+        {
+            if (node is JsonObject obj)
+            {
+                // A kulcsokról másolat kell: az értékadás iteráció közben módosítaná a gyűjteményt.
+                foreach (string key in obj.Select(kv => kv.Key).ToList())
+                {
+                    bool isLarge = LargeContentFields.Contains(key, StringComparer.OrdinalIgnoreCase);
+                    if (isLarge && obj[key] is JsonValue value && value.TryGetValue(out string? text) && text != null)
+                    {
+                        obj[key] = $"...({text.Length} karakter kihagyva)...";
+                    }
+                    else
+                    {
+                        ReplaceLargeContent(obj[key]);
+                    }
+                }
+            }
+            else if (node is JsonArray array)
+            {
+                foreach (var item in array)
+                {
+                    ReplaceLargeContent(item);
+                }
             }
         }
     }
