@@ -16,7 +16,7 @@ namespace SmartpageTimetableDuplicateV1
     /// </summary>
     public partial class LoginDialog : Form
     {
-        private string _serverKey; // "DEV", "DEMO", or "PROD"
+        private string _serverKey; // "DEV", "DEMO", "PROD", "PROD2"
         private HttpClientHandler _httpClientHandler;
 
         // Results after successful authentication
@@ -28,7 +28,8 @@ namespace SmartpageTimetableDuplicateV1
         {
             { "DEV", "https://smartpage-dev.hclinear.hu/auth-server-backend/api/v1/auth" },
             { "DEMO", "https://smartpage-demo.hclinear.hu/auth-server-backend/api/v1/auth" },
-            { "PROD", "https://smartpage.hclinear.hu/auth-server-backend/api/v1/auth" }
+            { "PROD", "https://smartpage.hclinear.hu/auth-server-backend/api/v1/auth" },
+            { "PROD2", "https://smartpage2.hclinear.hu/auth-server-backend/api/v1/auth" }
         };
 
         public LoginDialog(string serverKey)

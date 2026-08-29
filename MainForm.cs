@@ -69,7 +69,8 @@ namespace SmartpageTimetableDuplicateV1
         {
             { "DEV", "https://smartpage-dev.hclinear.hu/backend/api/v1" },
             { "DEMO", "https://smartpage-demo.hclinear.hu/backend/api/v1" },
-            { "PROD", "https://smartpage.hclinear.hu/backend/api/v1" }
+            { "PROD", "https://smartpage.hclinear.hu/backend/api/v1" },
+            { "PROD2", "https://smartpage2.hclinear.hu/backend/api/v1" }
         };
 
         public MainForm()
@@ -79,8 +80,8 @@ namespace SmartpageTimetableDuplicateV1
             InitializeComponent();
 
             // --- dropdown alapértékek ---
-            cmbServerLoad.Items.AddRange(new[] { "DEV", "DEMO", "PROD" });
-            cmbServerSave.Items.AddRange(new[] { "DEV", "DEMO", "PROD" });
+            cmbServerLoad.Items.AddRange(new[] { "DEV", "DEMO", "PROD", "PROD2" });
+            cmbServerSave.Items.AddRange(new[] { "DEV", "DEMO", "PROD", "PROD2" });
             cmbServerLoad.SelectedIndex = -1;
             cmbServerSave.SelectedIndex = -1;
 
