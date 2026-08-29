@@ -119,6 +119,25 @@ namespace SmartpageTimetableDuplicateV1
             this.CancelButton = btnCancel;
         }
 
+        // A hibaválasz gyakran nyers HTML (pl. nginx 404-es alapoldala, ha a szerver nem
+        // elérhető - tipikusan VPN nélkül); ilyenkor a HTML-t nem dobjuk a felhasználóra,
+        // hanem egy rövid, érthető üzenetet adunk.
+        private static string FormatErrorMessage(HttpResponseMessage response, string body)
+        {
+            string? contentType = response.Content.Headers.ContentType?.MediaType;
+            bool looksLikeHtml = (contentType != null && contentType.Contains("html", StringComparison.OrdinalIgnoreCase))
+                || body.TrimStart().StartsWith("<html", StringComparison.OrdinalIgnoreCase);
+
+            if (looksLikeHtml)
+            {
+                return response.StatusCode == System.Net.HttpStatusCode.NotFound
+                    ? $"{(int)response.StatusCode} - a szerver nem található (ellenőrizd a VPN-kapcsolatot)."
+                    : $"{(int)response.StatusCode} {response.ReasonPhrase} - a szerver váratlan választ adott.";
+            }
+
+            return $"{(int)response.StatusCode} {response.ReasonPhrase}\n{body}";
+        }
+
         private async void BtnLogin_Click(object? sender, EventArgs e)
         {
             TextBox? txtUsername = this.Controls["txtUsername"] as TextBox;
@@ -159,7 +178,7 @@ namespace SmartpageTimetableDuplicateV1
                     if (!signInResponse.IsSuccessStatusCode)
                     {
                         string err = await signInResponse.Content.ReadAsStringAsync();
-                        MessageBox.Show($"Bejelentkezés sikertelen (sign-in): {signInResponse.StatusCode}\n{err}", "Hiba", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        MessageBox.Show($"Bejelentkezés sikertelen (sign-in): {FormatErrorMessage(signInResponse, err)}", "Hiba", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         this.Enabled = true;
                         return;
                     }
@@ -213,7 +232,7 @@ namespace SmartpageTimetableDuplicateV1
                     else
                     {
                         string err = await tokenResponse.Content.ReadAsStringAsync();
-                        MessageBox.Show($"Token lekérése sikertelen: {tokenResponse.StatusCode}\n{err}", "Hiba", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        MessageBox.Show($"Token lekérése sikertelen: {FormatErrorMessage(tokenResponse, err)}", "Hiba", MessageBoxButtons.OK, MessageBoxIcon.Error);
                         this.Enabled = true;
                     }
                 }
