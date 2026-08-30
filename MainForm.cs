@@ -11,9 +11,10 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using SmartpageTimetableDuplicateV1.Models;
+using SmartPageDuplicate.Models;
+using SmartPageDuplicate.Copy;
 
-namespace SmartpageTimetableDuplicateV1
+namespace SmartPageDuplicate
 {
     public partial class MainForm : Form
     {
@@ -34,12 +35,12 @@ namespace SmartpageTimetableDuplicateV1
         private TimetableItem? _loadedTimetableItem;
         private LayoutItem? _loadedLayoutItem;
         private List<LayoutItems>? _loadedLayoutItems;
-        private List<DisplayInfo> _displaysLoad = new List<DisplayInfo>();
-        private List<DisplayInfo> _displaysSave = new List<DisplayInfo>();
+        private List<NamedEntity> _displaysLoad = new List<NamedEntity>();
+        private List<NamedEntity> _displaysSave = new List<NamedEntity>();
         private List<RasterFontInfo> _rasterFontsLoad = new List<RasterFontInfo>();
         private List<RasterFontInfo> _rasterFontsSave = new List<RasterFontInfo>();
-        private List<GroupInfo> _groupsLoad = new List<GroupInfo>();
-        private List<GroupInfo> _groupsSave = new List<GroupInfo>();
+        private List<NamedEntity> _groupsLoad = new List<NamedEntity>();
+        private List<NamedEntity> _groupsSave = new List<NamedEntity>();
         private Dictionary<int, string> _itemTypeLoad = new Dictionary<int, string>();
         private Dictionary<int, string> _itemTypeSave = new Dictionary<int, string>();
         private Dictionary<int, string> _anchorXLoad = new Dictionary<int, string>();
@@ -48,6 +49,67 @@ namespace SmartpageTimetableDuplicateV1
         private Dictionary<int, string> _anchorYSave = new Dictionary<int, string>();
         private Dictionary<int, string> _textColorLoad = new Dictionary<int, string>();
         private Dictionary<int, string> _textColorSave = new Dictionary<int, string>();
+
+        // A layout-elemek eddig lefordítatlanul átküldött hivatkozásai (H4). Csak eltérő
+        // szervereknél töltjük be őket, mert egy szerveren belül az eredeti ID a helyes.
+        private List<NamedEntity> _imagesLoad = new List<NamedEntity>();
+        private List<NamedEntity> _imagesSave = new List<NamedEntity>();
+        private List<NamedEntity> _gridsLoad = new List<NamedEntity>();
+        private List<NamedEntity> _gridsSave = new List<NamedEntity>();
+        private List<NamedEntity> _timetablesLoad = new List<NamedEntity>();
+        private List<NamedEntity> _timetablesSave = new List<NamedEntity>();
+
+        // A megálló-kötésekhez (slide): a megállók és az állapotok névtáblái.
+        private List<NamedEntity> _stopsLoad = new List<NamedEntity>();
+        private List<NamedEntity> _stopsSave = new List<NamedEntity>();
+        private List<NamedEntity> _statesLoad = new List<NamedEntity>();
+        private List<NamedEntity> _statesSave = new List<NamedEntity>();
+
+        // A másolás közben kihagyott dolgok, hogy a művelet végén egyben látszódjanak.
+        private readonly List<string> _skipped = new List<string>();
+
+        // Olyan hiányok, amikkel a mentés biztosan elbukna - ilyenkor el sem indítjuk. Tipikusan
+        // hiányzó raszterfont: azt az API-n keresztül nem lehet átvinni, kézzel kell pótolni.
+        private readonly List<string> _blockingProblems = new List<string>();
+
+        // A beolvasott elemben talált ismeretlen mezők. Azért marad meg a mentésig, mert a
+        // beolvasás és a mentés között eltelhet idő, és a figyelmeztetés kicsúszhat a képből.
+        private readonly List<string> _unknownFields = new List<string>();
+
+        // Ténylegesen megváltozott hivatkozások típusonként, a mentés előtti előnézethez.
+        private readonly Dictionary<string, int> _conversions = new Dictionary<string, int>();
+
+        private void NoteConversion(string what)
+        {
+            _conversions.TryGetValue(what, out int count);
+            _conversions[what] = count + 1;
+        }
+
+        /// <summary>
+        /// Ha van olyan hiány, amivel a mentés biztosan elbukna, egyben jelenti, és igazzal tér
+        /// vissza. Ilyenkor el sem indítjuk a műveletet - a szerver úgyis elutasítaná, csak
+        /// érthetetlenebb üzenettel és a folyamat közepén.
+        /// </summary>
+        private bool ReportBlockingProblems()
+        {
+            if (_blockingProblems.Count == 0) return false;
+
+            SetStatus("❌ A másolás nem indítható el, mert a cél szerverről hiányzik:", Theme.Danger);
+            foreach (string problem in _blockingProblems.Distinct())
+            {
+                SetStatus($"      • {problem}", Theme.Danger);
+            }
+            SetStatus("   A raszterfontok az API-n keresztül nem vihetők át - előbb kézzel fel kell tölteni őket a cél szerverre.", Theme.Danger);
+
+            MessageBox.Show(this,
+                "A másolás nem folytatható, mert a cél szerverről hiányzik:\n\n"
+                + FormatFieldList(_blockingProblems.Distinct().ToList())
+                + "\n\nA raszterfontok az API-n keresztül nem vihetők át, ezért ezeket előbb kézzel "
+                + "fel kell tölteni a cél szerverre. Utána a másolás megismételhető.",
+                "Hiányzó raszterfont",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return true;
+        }
 
         // In-memory auth/session values (UI fields removed)
         private string? _loadAuth;
@@ -73,6 +135,16 @@ namespace SmartpageTimetableDuplicateV1
             { "PROD2", "https://smartpage2.hclinear.hu/backend/api/v1" }
         };
 
+        /// <summary>A szerelvény verziója „v2.0.0" alakban, a csprojban megadott érték alapján.</summary>
+        private static string AppVersion
+        {
+            get
+            {
+                var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+                return version == null ? "" : $"v{version.Major}.{version.Minor}.{version.Build}";
+            }
+        }
+
         public MainForm()
         {
             _httpClientLoad = new HttpClient(_httpClientHandler, disposeHandler: false);
@@ -90,12 +162,9 @@ namespace SmartpageTimetableDuplicateV1
             cmbServerSave.SelectedIndexChanged += CmbServer_SelectedIndexChanged;
             cmbLoadEntityType.SelectedIndexChanged += CmbLoadEntityType_SelectedIndexChanged;
 
-            // --- státuszmező formázás ---
-            txtStatus.Font = new Font("Segoe UI", 10, FontStyle.Regular);
-            txtStatus.ForeColor = Color.Black;
-
-            // --- JSON mező formázás ---
-            txtJson.Font = new Font("Consolas", 9);
+            // A verzió a csprojból jön, hogy egy hibajelentésből kiderüljön, melyik példány futott.
+            this.Text = $"SmartPage Duplicate {AppVersion}";
+            lblVersion.Text = AppVersion;
 
             // --- Set focus to Load server combo on startup ---
             cmbServerLoad.Focus();
@@ -107,7 +176,17 @@ namespace SmartpageTimetableDuplicateV1
             _saveSession = null;
             _loadUsername = null;
             _saveUsername = null;
+
+            if (OperationLog.Directory != null)
+                SetStatus($"📁 Napló: {OperationLog.Directory}", Theme.Info);
+            else
+                SetStatus($"⚠️ A naplózás nem indult el: {OperationLog.FailureReason}", Theme.Warning);
         }
+
+        // Száraz futtatás: minden lefut a szerverre íráson kívül. Ilyenkor a POST-ok nem mennek el,
+        // csak a naplóba kerül, mit küldenénk - így a fordítás eredménye ellenőrizhető, mielőtt
+        // bármi megváltozna a szerveren.
+        private bool DryRun => chkDryRun.Checked;
 
         private void SetStatus(string message, Color color)
         {
@@ -116,6 +195,40 @@ namespace SmartpageTimetableDuplicateV1
             txtStatus.SelectionColor = color;
             txtStatus.AppendText((string.IsNullOrEmpty(txtStatus.Text) ? "" : Environment.NewLine) + message);
             txtStatus.ScrollToCaret();
+
+            // A státuszmező az ablak bezárásával elveszik; a napló marad.
+            OperationLog.Status(message);
+        }
+
+        private record PostResult(bool Success, bool WasSkipped, System.Net.HttpStatusCode StatusCode, string Body, string Error)
+        {
+            public static PostResult Skipped() => new(true, true, System.Net.HttpStatusCode.OK, "", "");
+        }
+
+        // Minden szerverre írás ezen az egy ponton megy át: itt dől el, hogy a kérés ténylegesen
+        // elmegy-e, itt kerül naplóba a teljes küldött törzs (a UI JSON-nézője 32 767 karakternél
+        // levág, a napló nem), és itt bomlik ki a szerver strukturált hibaválasza.
+        private async Task<PostResult> PostJsonAsync(string url, string json, string label,
+            Func<int, string?>? elementNameResolver = null)
+        {
+            if (DryRun)
+            {
+                OperationLog.SkippedRequest("POST", url, json);
+                SetStatus($"🔍 [száraz futtatás] {label}: a kérés NEM ment el, a küldendő JSON a naplóba került.", Theme.DryRun);
+                return PostResult.Skipped();
+            }
+
+            OperationLog.Request("POST", url, json);
+            using StringContent content = new StringContent(json, Encoding.UTF8, "application/json");
+            HttpResponseMessage response = await _httpClientSave.PostAsync(url, content);
+            string body = await response.Content.ReadAsStringAsync();
+            OperationLog.Response((int)response.StatusCode, body);
+
+            string error = response.IsSuccessStatusCode
+                ? ""
+                : ApiErrorFormatter.Format(response.StatusCode, body, elementNameResolver);
+
+            return new PostResult(response.IsSuccessStatusCode, false, response.StatusCode, body, error);
         }
 
         private static void ApplyAuthHeaders(HttpClient client, string? auth, string? session)
@@ -155,12 +268,21 @@ namespace SmartpageTimetableDuplicateV1
                         _loadSession = loginDialog.SessionId ?? "";
                         _loadUsername = loginDialog.Username ?? "";
                         txtLoadUsername.Text = _loadUsername;
-                        SetStatus($"✅ Bejelentkezés sikeres a {serverKey} (Load) szerverre.", Color.ForestGreen);
+                        SetStatus($"✅ Bejelentkezés sikeres a {serverKey} (Load) szerverre.", Theme.Success);
 
                         // Set headers and base URL for Load client
                         ApplyAuthHeaders(_httpClientLoad, _loadAuth, _loadSession);
                         _baseLoadUrl = _baseUrls[serverKey];
                         _loadApi = new SmartpageApiClient(_httpClientLoad, _baseLoadUrl);
+
+                        // A Load bejelentkezés csak akkor másolja át magát a Save oldalra, ha ott
+                        // még nincs kiválasztott szerver. Korábban felülírta a már beállított
+                        // célszervert is, így a másolat a forrásra került vissza.
+                        if (cmbServerSave.SelectedIndex != -1)
+                        {
+                            SetStatus($"ℹ️ A Save szerver ({cmbServerSave.SelectedItem}) beállítása megmarad.", Theme.Info);
+                            return;
+                        }
 
                         // Automatically copy Load credentials to Save server (without showing login dialog)
                         _isAutoCopyingCredentials = true;
@@ -180,7 +302,7 @@ namespace SmartpageTimetableDuplicateV1
                         _saveApi = new SmartpageApiClient(_httpClientSave, _baseSaveUrl);
 
                         _isAutoCopyingCredentials = false;
-                        SetStatus($"✅ Bejelentkezési adatok automatikusan másolva a Save szerverre ({serverKey}).", Color.ForestGreen);
+                        SetStatus($"✅ Bejelentkezési adatok automatikusan másolva a Save szerverre ({serverKey}).", Theme.Success);
                     }
                     else if (combo == cmbServerSave)
                     {
@@ -188,7 +310,7 @@ namespace SmartpageTimetableDuplicateV1
                         _saveSession = loginDialog.SessionId ?? "";
                         _saveUsername = loginDialog.Username ?? "";
                         txtSaveUsername.Text = _saveUsername;
-                        SetStatus($"✅ Bejelentkezés sikeres a {serverKey} (Save) szerverre.", Color.ForestGreen);
+                        SetStatus($"✅ Bejelentkezés sikeres a {serverKey} (Save) szerverre.", Theme.Success);
 
                         // Set headers for Save client - biztonságos, mert _httpClientSave mindig
                         // önálló példány, sosem ugyanaz az objektum, mint _httpClientLoad.
@@ -200,7 +322,7 @@ namespace SmartpageTimetableDuplicateV1
                 else
                 {
                     combo.SelectedIndex = -1;
-                    SetStatus($"⚠️ Bejelentkezés visszavonva a {serverKey} szervernél.", Color.Orange);
+                    SetStatus($"⚠️ Bejelentkezés visszavonva a {serverKey} szervernél.", Theme.Warning);
                 }
             }
         }
@@ -213,20 +335,121 @@ namespace SmartpageTimetableDuplicateV1
                 _loadedTimetableItem = null;
                 _loadedLayoutItem = null;
                 _loadedLayoutItems = null;
+                _unknownFields.Clear();
                 txtLoadEntityId.Text = "";
                 txtSaveName.Text = "";
                 txtJson.Text = "";
                 txtStatus.Clear();
-                SetStatus("⚠️ Entity típus megváltozott --> előző elem törölve.", Color.Orange);
+                SetStatus("⚠️ Entity típus megváltozott --> előző elem törölve.", Theme.Warning);
+            }
+        }
+        /// <summary>
+        /// A betöltött névtáblákból összeállítja a fordító bemenetét. A fordítás maga a
+        /// felülettől és a hálózattól független CopyTranslator dolga - ez a metódus a híd.
+        /// </summary>
+        private ServerCatalog BuildCatalog(bool fromLoadServer) => new()
+        {
+            ServerKey = (fromLoadServer ? cmbServerLoad : cmbServerSave).SelectedItem?.ToString() ?? "?",
+            Displays = fromLoadServer ? _displaysLoad : _displaysSave,
+            Groups = fromLoadServer ? _groupsLoad : _groupsSave,
+            Images = fromLoadServer ? _imagesLoad : _imagesSave,
+            Grids = fromLoadServer ? _gridsLoad : _gridsSave,
+            Timetables = fromLoadServer ? _timetablesLoad : _timetablesSave,
+            Stops = fromLoadServer ? _stopsLoad : _stopsSave,
+            States = fromLoadServer ? _statesLoad : _statesSave,
+            RasterFonts = fromLoadServer ? _rasterFontsLoad : _rasterFontsSave,
+            ElementTypes = fromLoadServer ? _itemTypeLoad : _itemTypeSave,
+            AnchorX = fromLoadServer ? _anchorXLoad : _anchorXSave,
+            AnchorY = fromLoadServer ? _anchorYLoad : _anchorYSave,
+            TextColors = fromLoadServer ? _textColorLoad : _textColorSave,
+        };
+
+        /// <summary>A fordító a mentés elején jön létre, a friss névtáblákkal.</summary>
+        private CopyTranslator NewTranslator()
+            => new(BuildCatalog(true), BuildCatalog(false), IsSameServer());
+
+        /// <summary>A fordító jelentését átveszi a felület saját listáiba (és így a naplóba is).</summary>
+        private void ReportTranslation(CopyTranslator translator)
+        {
+            foreach (string message in translator.Report.Skipped)
+            {
+                if (_skipped.Contains(message)) continue;
+                _skipped.Add(message);
+                SetStatus("⚠️ Figyelem: " + message, Theme.Warning);
+            }
+            foreach (var kv in translator.Report.Conversions)
+            {
+                _conversions[kv.Key] = kv.Value;
+            }
+            foreach (string problem in translator.Report.Blocking)
+            {
+                if (!_blockingProblems.Contains(problem)) _blockingProblems.Add(problem);
             }
         }
 
-        private record DisplayInfo(int Id, string Name);
-        private record RasterFontInfo(int Id, string TtFontName, int Size);
-        private record GroupInfo(int Id, string Name);
+        /// <summary>
+        /// A képhivatkozás rendezése. A döntést a fordító hozza (megvan-e a célon, kell-e
+        /// feltölteni); ez a metódus csak a hálózati részt teszi hozzá, amit a fordító
+        /// szándékosan nem ismer.
+        /// </summary>
+        private async Task<bool> ResolveImageAsync(CopyTranslator translator, JsonObject itemObj, string field, string itemName)
+        {
+            var lookup = translator.LookupImage(itemObj, field, itemName);
+            switch (lookup.Kind)
+            {
+                case CopyTranslator.ImageLookupKind.NothingToDo:
+                case CopyTranslator.ImageLookupKind.FoundOnTarget:
+                    return true;
+
+                case CopyTranslator.ImageLookupKind.MissingOnSource:
+                    return false;
+
+                case CopyTranslator.ImageLookupKind.NeedsUpload:
+                    if (DryRun)
+                    {
+                        SetStatus($"🔍 [száraz futtatás] a(z) \"{lookup.Name}\" kép feltöltésre kerülne a {cmbServerSave.SelectedItem} szerverre ({itemName}).", Theme.DryRun);
+                        NoteConversion("feltöltendő kép");
+                        return true;
+                    }
+
+                    int? uploadedId = await UploadImageAsync(translator, lookup.SourceId, lookup.Name);
+                    if (uploadedId == null)
+                    {
+                        NoteSkipped($"a(z) \"{lookup.Name}\" kép feltöltése nem sikerült ({itemName}).");
+                        return false;
+                    }
+                    translator.RegisterUploadedImage(itemObj, field, uploadedId.Value, lookup.Name);
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
         private record AnchorXItem(int Id, string Label);
         private record AnchorYItem(int Id, string Label);
         private record TextColorItem(int Id, string Label);
+
+        // Az id + name szerkezet közös a képeknél, rácsoknál és menetrendeknél.
+        private async Task<List<NamedEntity>?> LoadNamedListAsync(string endpoint, bool fromLoadServer)
+        {
+            return await LoadListAsync(endpoint, fromLoadServer, body =>
+            {
+                if (JsonNode.Parse(body) is not JsonArray root) return null;
+                var list = new List<NamedEntity>();
+                foreach (var item in root)
+                {
+                    if (item is JsonObject o
+                        && o["id"]?.GetValue<int?>() is int id
+                        && o["name"]?.GetValue<string?>() is string name
+                        && !string.IsNullOrEmpty(name))
+                    {
+                        list.Add(new NamedEntity(id, name));
+                    }
+                }
+                return list;
+            });
+        }
 
         // A tényleges HTTP GET + JSON-értelmezés a UI-mentes SmartpageApiClient-ben történik;
         // ez a metódus csak a Load/Save oldal kiválasztását és a hibaüzenet státuszsorba
@@ -236,14 +459,14 @@ namespace SmartpageTimetableDuplicateV1
             var api = fromLoadServer ? _loadApi : _saveApi;
             if (api == null)
             {
-                SetStatus($"❌ Hiba {endpoint}: nincs bejelentkezve a {(fromLoadServer ? "Load" : "Save")} szerverre.", Color.Red);
+                SetStatus($"❌ Hiba {endpoint}: nincs bejelentkezve a {(fromLoadServer ? "Load" : "Save")} szerverre.", Theme.Danger);
                 return null;
             }
 
             var result = await api.LoadListAsync(endpoint, customDeserializer);
             if (!result.Success)
             {
-                SetStatus($"❌ Hiba {endpoint}: {result.Error}", Color.Red);
+                SetStatus($"❌ Hiba {endpoint}: {result.Error}", Theme.Danger);
                 return null;
             }
             return result.Value;
@@ -257,7 +480,7 @@ namespace SmartpageTimetableDuplicateV1
                 var dict = list.ToDictionary(idSelector, item => labelSelector(item) ?? "");
                 setDict(dict);
                 string serverKey = fromLoadServer ? cmbServerLoad.SelectedItem?.ToString() ?? "DEV" : cmbServerSave.SelectedItem?.ToString() ?? "DEV";
-                SetStatus($"✅ Betöltve {list.Count}db {itemName} a {(fromLoadServer ? "Load" : "Save")} ({serverKey}) szerverről.", Color.ForestGreen);
+                SetStatus($"✅ Betöltve {list.Count}db {itemName} a {(fromLoadServer ? "Load" : "Save")} ({serverKey}) szerverről.", Theme.Success);
             }
         }
 
@@ -298,18 +521,18 @@ namespace SmartpageTimetableDuplicateV1
             return list;
         }
 
-        private async Task<List<DisplayInfo>?> LoadDisplaysList(bool fromLoadServer)
+        private async Task<List<NamedEntity>?> LoadDisplaysList(bool fromLoadServer)
         {
             return await LoadListAsync("display/list", fromLoadServer, DeserializeDisplaysList);
         }
-        private List<DisplayInfo>? DeserializeDisplaysList(string body)
+        private List<NamedEntity>? DeserializeDisplaysList(string body)
         {
             var root = JsonNode.Parse(body) as JsonArray;
             if (root == null)
             {
                 return null;
             }
-            var list = new List<DisplayInfo>();
+            var list = new List<NamedEntity>();
             foreach (var item in root)
             {
                 if (item is JsonObject groupObj)
@@ -318,25 +541,25 @@ namespace SmartpageTimetableDuplicateV1
                     string? name = groupObj["name"]?.GetValue<string?>();
                     if (id.HasValue && !string.IsNullOrEmpty(name))
                     {
-                        list.Add(new DisplayInfo(id.Value, name!));
+                        list.Add(new NamedEntity(id.Value, name!));
                     }
                 }
             }
             return list;
         }
 
-        private async Task<List<GroupInfo>?> LoadGroupsList(bool fromLoadServer)
+        private async Task<List<NamedEntity>?> LoadGroupsList(bool fromLoadServer)
         {
             return await LoadListAsync("group/list", fromLoadServer, DeserializeGroupsList);
         }
-        private List<GroupInfo>? DeserializeGroupsList(string body)
+        private List<NamedEntity>? DeserializeGroupsList(string body)
         {
             var root = JsonNode.Parse(body) as JsonArray;
             if (root == null)
             {
                 return null;
             }
-            var list = new List<GroupInfo>();
+            var list = new List<NamedEntity>();
             foreach (var item in root)
             {
                 if (item is JsonObject groupObj)
@@ -345,7 +568,7 @@ namespace SmartpageTimetableDuplicateV1
                     string? name = groupObj["name"]?.GetValue<string?>();
                     if (id.HasValue && !string.IsNullOrEmpty(name))
                     {
-                        list.Add(new GroupInfo(id.Value, name!));
+                        list.Add(new NamedEntity(id.Value, name!));
                     }
                 }
             }
@@ -389,184 +612,173 @@ namespace SmartpageTimetableDuplicateV1
         }
 
 
-        private void RemoveIdProperties(JsonNode? node)
+        /// <summary>Azonos szerveren belül az eredeti ID-k a helyesek - ilyenkor nem fordítunk.</summary>
+        private bool IsSameServer()
+            => cmbServerLoad.SelectedItem?.ToString() == cmbServerSave.SelectedItem?.ToString();
+
+        private void NoteSkipped(string message)
         {
-            if (node is JsonObject obj)
-            {
-                var toRemove = new List<string>();
-                foreach (var kv in obj)
-                {
-                    var propName = kv.Key;
-                    if (propName.Equals("imageId", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // Ha Load szerver != Save szerver, törölni kell a háttérképet
-                        string? loadServerKey = cmbServerLoad.SelectedItem?.ToString();
-                        string? saveServerKey = cmbServerSave.SelectedItem?.ToString();
-                        if (loadServerKey != saveServerKey)
-                        {
-                            toRemove.Add(propName);
-                            SetStatus($"⚠️ Figyelem: az ID={kv.Value} kép a másolásból kimarad, mert a Load és Save szerverek különbözőek, majd kézzel pótolja.", Color.Orange);
-                        }
-                    }
-                    else if (propName.Equals("imageContent", StringComparison.OrdinalIgnoreCase))
-                    {
-                        toRemove.Add(propName);
-                    }
-                    else if (propName.Equals("displayId", StringComparison.OrdinalIgnoreCase))
-                    {
-                        ConvertDisplayId1(kv.Value);
-                    }
-                    else if (propName.Equals("groupIds", StringComparison.OrdinalIgnoreCase))
-                    {
-                        ConvertGroupIds(kv.Value);
-                    }
-                    else if (propName.Equals("rasterFontId", StringComparison.OrdinalIgnoreCase))
-                    {
-                        ConvertRasterFontId(kv);
-                    }
-                    else if (propName.Equals("id", StringComparison.OrdinalIgnoreCase) ||
-                        propName.EndsWith("Id", StringComparison.OrdinalIgnoreCase))
-                    {
-                        toRemove.Add(propName);
-                    }
-                }
-
-                foreach (var name in toRemove)
-                {
-                    obj.Remove(name);
-                }
-
-                foreach (var kv in obj)
-                {
-                    RemoveIdProperties(kv.Value);
-                }
-            }
-            else if (node is JsonArray arr)
-            {
-                foreach (var item in arr)
-                {
-                    RemoveIdProperties(item);
-                }
-            }
+            _skipped.Add(message);
+            SetStatus("⚠️ Figyelem: " + message, Theme.Warning);
         }
-private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
+
+        /// <summary>
+        /// A művelet végén egyben megmutatja, mi maradt ki. A figyelmeztetések menet közben is
+        /// megjelennek, de a hosszú státusznaplóban elvesznek - itt egy helyen látszanak.
+        /// </summary>
+        private void ReportSkipped()
         {
-            if (kv.Value != null && kv.Value.GetValue<int?>() is int rasterFontId)
+            if (_skipped.Count == 0)
             {
-                var rasterFontLoad = _rasterFontsLoad.FirstOrDefault(rf => rf.Id == rasterFontId);
-                if (rasterFontLoad == null)
-                {
-                    SetStatus($"❌ Hiba: a Load szerveren nem található a rasterFontId: {rasterFontId}", Color.Red);
-                    throw new Exception("No matching raster font on Load server");
-                }
-
-                var rasterFontSave = _rasterFontsSave.FirstOrDefault(rf => string.Equals(rf.TtFontName, rasterFontLoad.TtFontName, StringComparison.OrdinalIgnoreCase)
-                                                                            && rf.Size == rasterFontLoad.Size);
-                if (rasterFontSave == null)
-                {
-                    SetStatus($"❌ Hiba: a Save szerveren nem található a {rasterFontLoad.TtFontName} (Size: {rasterFontLoad.Size}) raster font", Color.Red);
-                    throw new Exception("No matching raster font on Save server");
-                }
-
-                // Frissítse az értéket a Save szerver rasterFontId-jére
-                if (kv.Value is JsonObject parentObj)
-                {
-                    parentObj[kv.Key] = rasterFontSave.Id;
-                }
+                SetStatus("✅ Összegzés: minden hivatkozás lefordítható volt, semmi nem maradt ki.", Theme.Success);
+                return;
             }
-            else
+
+            SetStatus($"⚠️ Összegzés: {_skipped.Count} dolog maradt ki a másolatból:", Theme.Warning);
+            foreach (var item in _skipped)
             {
-                SetStatus($"❌ Hiba: a Load szerveren nincs rasterFontId: {kv.Value}", Color.Red);
-                throw new Exception("Invalid rasterFontId value");
+                SetStatus("      • " + item, Theme.Warning);
             }
         }
 
-        private void ConvertDisplayId1(JsonNode? jsonNode)
+        /// <summary>
+        /// Kép átvitele a Load szerverről a Save szerverre. A tartalom base64-ként utazik.
+        ///
+        /// A szerver a feltöltött képet újrakódolhatja: egy 4 bites palettás PNG 8 bitesként jön
+        /// vissza. A felbontás és a színtípus megmarad, tehát a kép tartalma nem sérül, de
+        /// byte-azonosságra nem szabad építeni.
+        /// </summary>
+        private async Task<int?> UploadImageAsync(CopyTranslator translator, int loadImageId, string name)
         {
-            if (jsonNode == null) return;
-            if (jsonNode.GetValue<int?>() is int displayId)
-            {
-                var displayLoad = _displaysLoad.FirstOrDefault(d => d.Id == displayId);
-                if (displayLoad == null)
-                {
-                    SetStatus($"❌ Hiba: a Load szerveren nem található a displayId: {displayId}", Color.Red);
-                    throw new Exception("No matching display on Load server");
-                }
+            SetStatus($"⬆️ A(z) \"{name}\" kép átvitele a {cmbServerSave.SelectedItem} szerverre...", Theme.DryRun);
 
-                var displaySave = _displaysSave.FirstOrDefault(d => string.Equals(d.Name, displayLoad.Name, StringComparison.OrdinalIgnoreCase));
-                if (displaySave == null)
-                {
-                    SetStatus($"❌ Hiba: a Save szerveren nem található a {displayLoad.Name} kijelző", Color.Red);
-                    throw new Exception("No matching display on Save server");
-                }
-
-                // Frissítse az értéket a Save szerver displayId-jére
-                if (jsonNode is JsonValue jsonValue && jsonValue.TryGetValue(out int _))
-                {
-                    jsonNode.ReplaceWith(displaySave.Id);
-                }
-            }
-            else
+            // 1. Letöltés a forrásról. Az image/load POST-ot vár, nem GET-et.
+            string loadUrl = $"{_baseLoadUrl}/image/load";
+            string loadBody = new JsonObject { ["id"] = loadImageId }.ToJsonString();
+            JsonObject? image;
+            try
             {
-                SetStatus($"❌ Hiba: a Load szerveren nincs displayId: {jsonNode}", Color.Red);
-                throw new Exception("Invalid displayId value");
+                OperationLog.Request("POST", loadUrl, loadBody);
+                using var content = new StringContent(loadBody, Encoding.UTF8, "application/json");
+                HttpResponseMessage response = await _httpClientLoad.PostAsync(loadUrl, content);
+                string body = await response.Content.ReadAsStringAsync();
+                OperationLog.Response((int)response.StatusCode, body);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    SetStatus($"❌ A kép letöltése sikertelen - {ApiErrorFormatter.Format(response.StatusCode, body)}", Theme.Danger);
+                    return null;
+                }
+                image = JsonNode.Parse(body) as JsonObject;
             }
+            catch (Exception ex)
+            {
+                SetStatus($"❌ A kép letöltése sikertelen: {ex.Message}", Theme.Danger);
+                return null;
+            }
+
+            if (image == null || image["file"] == null)
+            {
+                SetStatus($"❌ A(z) \"{name}\" kép tartalma üres, a feltöltés kimarad.", Theme.Danger);
+                return null;
+            }
+
+            // 2. Az azonosítót el kell dobni, a jogosultsági csoportokat pedig lefordítani.
+            image.Remove("id");
+            image.Remove("imageUrl");
+            image.Remove("version");
+            translator.TranslateGroupIdsOf(image);
+
+            // 3. Feltöltés a célra.
+            var result = await PostJsonAsync($"{_baseSaveUrl}/image/save", image.ToJsonString(), $"Kép feltöltése: {name}");
+            if (!result.Success)
+            {
+                SetStatus($"❌ A(z) \"{name}\" kép feltöltése sikertelen - {result.Error}", Theme.Danger);
+                return null;
+            }
+            if (!int.TryParse(result.Body.Trim(), out int newId) || newId <= 0)
+            {
+                SetStatus($"❌ A kép feltöltése nem érvényes azonosítót adott vissza: '{result.Body}'", Theme.Danger);
+                return null;
+            }
+
+            SetStatus($"✅ A(z) \"{name}\" kép átvitte (új ID={newId}).", Theme.Success);
+            return newId;
         }
 
-        private void ConvertGroupIds(JsonNode? node)
+        /// <summary>
+        /// Elem választása listából. A szerver adja a listát (357 layout, 27 menetrend a PROD2-n),
+        /// így az azonosítót nem kell kézzel begépelni - egy elgépelt ID-ből rossz elem másolása
+        /// lenne, amit csak a JSON-ból lehetne észrevenni.
+        /// </summary>
+        private async void BtnPickEntity_Click(object? sender, EventArgs e)
         {
-            // Ha Load szerver == Save szerver, akkor nem kell konvertálni
-            string? loadServerKey = cmbServerLoad.SelectedItem?.ToString();
-            string? saveServerKey = cmbServerSave.SelectedItem?.ToString();
-            if (loadServerKey == saveServerKey)
+            if (_baseLoadUrl == null)
             {
-                return; // Ugyanaz a szerver, nincs szükség konverzióra
+                SetStatus("❌ Hiba: előbb jelentkezz be a Load szerverre!", Theme.Danger);
+                return;
             }
 
-            // Handle case where node is the groupIds array itself
-            if (node is JsonArray arr && arr.Count > 0)
+            string entityType = cmbLoadEntityType.SelectedItem?.ToString() ?? "Timetable";
+            bool isLayout = entityType == "Layout";
+
+            btnPickEntity.Enabled = false;
+            try
             {
-                // Check if this is an array of integers (groupIds)
-                var firstElem = arr.FirstOrDefault();
-                if (firstElem?.GetValue<int?>().HasValue ?? false)
+                SetStatus($"{entityType} lista betöltése a {cmbServerLoad.SelectedItem} szerverről...", Theme.Ink);
+                var rows = await LoadPickerRowsAsync(isLayout);
+                if (rows == null || rows.Count == 0)
                 {
-                    // This is the groupIds array, map each ID
-                    var newIds = new List<int>();
-                    foreach (var v in arr)
-                    {
-                        int? loadId = v?.GetValue<int?>();
-                        if (!loadId.HasValue)
-                        {
-                            SetStatus($"⚠️ Figyelem: érvénytelen Jogosultság (groupId) a betöltött Elem-nél: {v} <- kihagyva", Color.Orange);
-                            continue; // Kihagyja ezt az elemet, folytatja a többivel
-                        }
-
-                        var gLoad = _groupsLoad.FirstOrDefault(g => g.Id == loadId.Value);
-                        if (gLoad == null)
-                        {
-                            SetStatus($"⚠️ Figyelem: a 'Load' szerveren nem található a groupId: {loadId} <- kihagyva", Color.Orange);
-                            continue; // Kihagyja ezt az elemet, folytatja a többivel
-                        }
-
-                        var gSave = _groupsSave.FirstOrDefault(g => string.Equals(g.Name, gLoad.Name, StringComparison.OrdinalIgnoreCase));
-                        if (gSave == null)
-                        {
-                            SetStatus($"⚠️ Figyelem: a 'Save' szerveren nem található a {gLoad.Name} jogosultsági csoport <- kihagyva", Color.Orange);
-                            continue; // Kihagyja ezt az elemet, folytatja a többivel
-                        }
-
-                        newIds.Add(gSave.Id);
-                    }
-
-                    // Replace the array content in-place
-                    arr.Clear();
-                    foreach (var id in newIds)
-                    {
-                        arr.Add(id);
-                    }
+                    SetStatus($"❌ Hiba: a(z) {entityType} lista üres vagy nem érhető el.", Theme.Danger);
                     return;
                 }
+
+                using var dialog = new EntityPickerDialog(
+                    $"{entityType} választása - {cmbServerLoad.SelectedItem}",
+                    isLayout ? "Kijelző" : "Méret",
+                    rows);
+
+                if (dialog.ShowDialog(this) == DialogResult.OK)
+                {
+                    txtLoadEntityId.Text = dialog.SelectedId.ToString();
+                    SetStatus($"✅ Kiválasztva: ID={dialog.SelectedId} \"{dialog.SelectedName}\"", Theme.Success);
+                }
             }
+            finally
+            {
+                btnPickEntity.Enabled = true;
+            }
+        }
+
+        /// <summary>A választólista sorai: a kiegészítő oszlop layoutnál a kijelző, menetrendnél a méret.</summary>
+        private async Task<List<PickerRow>?> LoadPickerRowsAsync(bool isLayout)
+        {
+            string endpoint = isLayout ? "layout/list" : "dynamic-timetable/list";
+            return await LoadListAsync(endpoint, fromLoadServer: true, body =>
+            {
+                if (JsonNode.Parse(body) is not JsonArray root) return null;
+                var rows = new List<PickerRow>();
+                foreach (var item in root)
+                {
+                    if (item is not JsonObject o) continue;
+                    if (o["id"]?.GetValue<int?>() is not int id) continue;
+                    string name = o["name"]?.GetValue<string?>() ?? "";
+
+                    string extra;
+                    if (isLayout)
+                    {
+                        extra = o["displayName"]?.GetValue<string?>() ?? "";
+                    }
+                    else
+                    {
+                        int? width = o["width"]?.GetValue<int?>();
+                        int? height = o["height"]?.GetValue<int?>();
+                        extra = width.HasValue && height.HasValue ? $"{width}×{height}" : "";
+                    }
+                    rows.Add(new PickerRow(id, name, extra));
+                }
+                return rows;
+            });
         }
 
         private async void BtnLoad_Click(object sender, EventArgs e)
@@ -576,23 +788,27 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
             var serverLoadSelected = cmbServerLoad.SelectedItem;
             if (serverLoadSelected == null)
             {
-                SetStatus($"❌ Hiba: nincs kiválasztva Load szerver!", Color.Red);
+                SetStatus($"❌ Hiba: nincs kiválasztva Load szerver!", Theme.Danger);
                 return;
             }
             if (_baseLoadUrl == null)
             {
-                SetStatus($"❌ Hiba: nincs bejelentkezve a Load szerverre!", Color.Red);
+                SetStatus($"❌ Hiba: nincs bejelentkezve a Load szerverre!", Theme.Danger);
                 return;
             }
 
             string id = txtLoadEntityId.Text.Trim();
             if (string.IsNullOrEmpty(id))
             {
-                SetStatus($"❌ Hiba: az ID mező üres!", Color.Red);
+                SetStatus($"❌ Hiba: az ID mező üres!", Theme.Danger);
                 return;
             }
 
             string entityType = cmbLoadEntityType.SelectedItem?.ToString() ?? "Timetable";
+            _unknownFields.Clear();
+            OperationLog.BeginOperation($"BEOLVASÁS - {entityType} ID={id}",
+                serverLoadSelected.ToString() ?? "?", "-", dryRun: false);
+
             if (entityType == "Layout")
             {
                 await LoadLayoutEntityAsync(id);
@@ -603,14 +819,14 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
             }
             else
             {
-                SetStatus($"❌ Hiba: az elemtípus nem értelmezhető.", Color.Red);
+                SetStatus($"❌ Hiba: az elemtípus nem értelmezhető.", Theme.Danger);
                 return;
             }
         }
 
         private async Task LoadTimetableEntityAsync(string id)
         {
-            SetStatus("Timetable beolvasása elkezdődött...", Color.Black);
+            SetStatus("Timetable beolvasása elkezdődött...", Theme.Ink);
             try
             {
                 /*                
@@ -619,7 +835,7 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
                                 if (!briefResponse.IsSuccessStatusCode)
                                 {
                                     string err = await briefResponse.Content.ReadAsStringAsync();
-                                    SetStatus($"❌ Hiba load-brief: {briefResponse.StatusCode} - {err}", Color.Red);
+                                    SetStatus($"❌ Hiba load-brief: {briefResponse.StatusCode} - {err}", Theme.Danger);
                                     return;
                                 }
 
@@ -629,94 +845,125 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
 
                                 if (briefItem == null)
                                 {
-                                    SetStatus($"❌ Hiba: a Timetable load-brief nem értelmezhető.", Color.Red);
+                                    SetStatus($"❌ Hiba: a Timetable load-brief nem értelmezhető.", Theme.Danger);
                                     return;
                                 }
-                                SetStatus($"✅ Timetable brief sikeresen beolvasva a {cmbServerLoad.SelectedItem} szerverről.", Color.ForestGreen);
+                                SetStatus($"✅ Timetable brief sikeresen beolvasva a {cmbServerLoad.SelectedItem} szerverről.", Theme.Success);
                 */
                 string fullUrl = $"{_baseLoadUrl}/dynamic-timetable/load?id={id}"; //included the brief information, fields
+                OperationLog.Request("GET", fullUrl, null);
                 HttpResponseMessage fullResponse = await _httpClientLoad.GetAsync(fullUrl);
                 if (!fullResponse.IsSuccessStatusCode)
                 {
                     string err = await fullResponse.Content.ReadAsStringAsync();
-                    SetStatus($"❌ Hiba load: {fullResponse.StatusCode} - {err}", Color.Red);
+                    OperationLog.Response((int)fullResponse.StatusCode, err);
+                    SetStatus($"❌ A Timetable beolvasása sikertelen - {ApiErrorFormatter.Format(fullResponse.StatusCode, err)}", Theme.Danger);
                     return;
                 }
 
                 string fullJson = await fullResponse.Content.ReadAsStringAsync();
+                // A beolvasott nyers JSON naplóba kerül: ez lesz az összehasonlítási alap, ha
+                // később kiderül, hogy a másolat eltér az eredetitől.
+                OperationLog.Response((int)fullResponse.StatusCode, fullJson);
                 var fullItem = JsonSerializer.Deserialize<TimetableItem>(
                     fullJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
                 if (fullItem == null)
                 {
-                    SetStatus($"❌ Hiba: a teljes elem nem értelmezhető.", Color.Red);
+                    SetStatus($"❌ Hiba: a teljes elem nem értelmezhető.", Theme.Danger);
+                    return;
+                }
+
+                if (!CheckModelFields(fullJson, typeof(TimetableItem), "Timetable"))
+                {
+                    DiscardLoadedEntity("A beolvasás megszakadt: ismeretlen mezők miatt az elem nem került betöltésre.");
                     return;
                 }
 
                 _loadedTimetableItem = fullItem;
                 txtSaveName.Text = fullItem.Name ?? "";
                 DisplayTxtJson(fullItem);
-                SetStatus($"✅ Timetable sikeresen beolvasva a {cmbServerLoad.SelectedItem} szerverről.", Color.ForestGreen);
+                SetStatus($"✅ Timetable sikeresen beolvasva a {cmbServerLoad.SelectedItem} szerverről.", Theme.Success);
             }
             catch (Exception ex)
             {
-                SetStatus($"❌ Hiba: {ex.Message}", Color.Red);
+                SetStatus($"❌ Hiba: {ex.Message}", Theme.Danger);
             }
         }
 
         private async Task LoadLayoutEntityAsync(string id)
         {
-            SetStatus("Layout beolvasása elkezdődött...", Color.Black);
+            SetStatus("Layout beolvasása elkezdődött...", Theme.Ink);
             try
             {
                 string briefUrl = $"{_baseLoadUrl}/layout/load/{id}";
+                OperationLog.Request("GET", briefUrl, null);
                 HttpResponseMessage briefResponse = await _httpClientLoad.GetAsync(briefUrl);
                 if (!briefResponse.IsSuccessStatusCode)
                 {
                     string err = await briefResponse.Content.ReadAsStringAsync();
-                    SetStatus($"❌ Hiba load-brief: {briefResponse.StatusCode} - {err}", Color.Red);
+                    OperationLog.Response((int)briefResponse.StatusCode, err);
+                    SetStatus($"❌ A Layout fejléc beolvasása sikertelen - {ApiErrorFormatter.Format(briefResponse.StatusCode, err)}", Theme.Danger);
                     return;
                 }
 
                 string briefJson = await briefResponse.Content.ReadAsStringAsync();
+                OperationLog.Response((int)briefResponse.StatusCode, briefJson);
                 var briefItem = JsonSerializer.Deserialize<LayoutItem>(
                     briefJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                 if (briefItem == null)
                 {
-                    SetStatus($"❌ Hiba: a load-brief nem értelmezhető.", Color.Red);
+                    SetStatus($"❌ Hiba: a load-brief nem értelmezhető.", Theme.Danger);
+                    return;
+                }
+
+                if (!CheckModelFields(briefJson, typeof(LayoutItem), "Layout fejléc"))
+                {
+                    DiscardLoadedEntity("A beolvasás megszakadt: ismeretlen mezők miatt az elem nem került betöltésre.");
                     return;
                 }
 
                 _loadedLayoutItem = briefItem;
                 txtSaveName.Text = briefItem.Name ?? "";
                 DisplayTxtJson(briefItem);
-                SetStatus($"✅ Layout brief sikeresen beolvasva a {cmbServerLoad.SelectedItem} szerverről.", Color.ForestGreen);
+                SetStatus($"✅ Layout brief sikeresen beolvasva a {cmbServerLoad.SelectedItem} szerverről.", Theme.Success);
 
                 string fullUrl = $"{_baseLoadUrl}/element/list/layoutId?layoutId={id}";
+                OperationLog.Request("GET", fullUrl, null);
                 HttpResponseMessage fullResponse = await _httpClientLoad.GetAsync(fullUrl);
                 if (!fullResponse.IsSuccessStatusCode)
                 {
                     string err = await fullResponse.Content.ReadAsStringAsync();
-                    SetStatus($"❌ Hiba full-load: {fullResponse.StatusCode} - {err}", Color.Red);
+                    OperationLog.Response((int)fullResponse.StatusCode, err);
+                    SetStatus($"❌ A Layout elemeinek beolvasása sikertelen - {ApiErrorFormatter.Format(fullResponse.StatusCode, err)}", Theme.Danger);
                     return;
                 }
 
                 string fullJson = await fullResponse.Content.ReadAsStringAsync();
+                OperationLog.Response((int)fullResponse.StatusCode, fullJson);
                 var fullItem = JsonSerializer.Deserialize<List<LayoutItems>>(
                     fullJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                 if (fullItem == null)
                 {
-                    SetStatus($"❌ Hiba: a teljes full-elem nem értelmezhető.", Color.Red);
+                    SetStatus($"❌ Hiba: a teljes full-elem nem értelmezhető.", Theme.Danger);
+                    return;
+                }
+
+                if (!CheckModelFields(fullJson, typeof(LayoutItems), "Layout elemek"))
+                {
+                    // A fejléc ilyenkor már be van töltve - azt is el kell dobni, különben
+                    // egy elemek nélküli, félig betöltött állapot maradna a memóriában.
+                    DiscardLoadedEntity("A beolvasás megszakadt: ismeretlen mezők miatt az elem nem került betöltésre.");
                     return;
                 }
 
                 _loadedLayoutItems = fullItem;
                 DisplayTxtJson(fullItem, true);
-                SetStatus($"✅ Layout összes eleme ({fullItem.Count}db) sikeresen beolvasva a {cmbServerLoad.SelectedItem} szerverről.", Color.ForestGreen);
+                SetStatus($"✅ Layout összes eleme ({fullItem.Count}db) sikeresen beolvasva a {cmbServerLoad.SelectedItem} szerverről.", Theme.Success);
             }
             catch (Exception ex)
             {
-                SetStatus($"❌ Hiba: {ex.Message}", Color.Red);
+                SetStatus($"❌ Hiba: {ex.Message}", Theme.Danger);
             }
         }
 
@@ -727,33 +974,56 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
             var serverLoadSelected = cmbServerLoad.SelectedItem;
             if (serverLoadSelected == null)
             {
-                SetStatus($"❌ Hiba: nincs kiválasztva Load szerver!", Color.Red);
+                SetStatus($"❌ Hiba: nincs kiválasztva Load szerver!", Theme.Danger);
                 return;
             }
             string serverLoadKey = serverLoadSelected.ToString() ?? "DEV";
             if (_baseLoadUrl == null)
             {
-                SetStatus($"❌ Hiba: nincs bejelentkezve a Load szerverre!", Color.Red);
+                SetStatus($"❌ Hiba: nincs bejelentkezve a Load szerverre!", Theme.Danger);
                 return;
             }
 
             var serverSaveSelected = cmbServerSave.SelectedItem;
             if (serverSaveSelected == null)
             {
-                SetStatus($"❌ Hiba: nincs kiválasztva Save szerver!", Color.Red);
+                SetStatus($"❌ Hiba: nincs kiválasztva Save szerver!", Theme.Danger);
                 return;
             }
             string serverSaveKey = serverSaveSelected.ToString() ?? "DEV";
             if (_baseSaveUrl == null)
             {
-                SetStatus($"❌ Hiba: nincs bejelentkezve a Save szerverre!", Color.Red);
+                SetStatus($"❌ Hiba: nincs bejelentkezve a Save szerverre!", Theme.Danger);
+                return;
+            }
+
+            _skipped.Clear();
+            _conversions.Clear();
+            _blockingProblems.Clear();
+            OperationLog.BeginOperation(
+                $"MENTÉS - {cmbLoadEntityType.SelectedItem} \"{txtSaveName.Text.Trim()}\"",
+                serverLoadKey, serverSaveKey, DryRun);
+            if (DryRun)
+            {
+                SetStatus("🔍 Száraz futtatás: a fordítás lefut, de a szerverre semmi nem íródik.", Theme.DryRun);
+            }
+
+            // A gyors, olcsó ellenőrzések előre: ne a listák betöltése után derüljön ki, hogy
+            // üres a név, vagy hogy a név már foglalt.
+            if (string.IsNullOrEmpty(txtSaveName.Text.Trim()))
+            {
+                SetStatus($"❌ Hiba: az új név üres!", Theme.Danger);
+                return;
+            }
+            if (!await EnsureFreeNameAsync(cmbLoadEntityType.SelectedItem?.ToString() ?? "Timetable"))
+            {
                 return;
             }
 
             var displaysLoad = await LoadDisplaysList(true);  // load displays list from Load server
             if (displaysLoad == null)
             {
-                SetStatus($"❌ Hiba: displays lista betöltése sikertelen a {serverLoadKey} (Load) szervernél.", Color.Red);
+                SetStatus($"❌ Hiba: displays lista betöltése sikertelen a {serverLoadKey} (Load) szervernél.", Theme.Danger);
                 return;
             }
             _displaysLoad = displaysLoad;
@@ -761,7 +1031,7 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
             var displaysSave = await LoadDisplaysList(false);  // load displays list from Save server
             if (displaysSave == null)
             {
-                SetStatus($"❌ Hiba: displays lista betöltése sikertelen a {serverSaveKey} (Save) szervernél.", Color.Red);
+                SetStatus($"❌ Hiba: displays lista betöltése sikertelen a {serverSaveKey} (Save) szervernél.", Theme.Danger);
                 return;
             }
             _displaysSave = displaysSave;
@@ -769,45 +1039,50 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
             var rasterFontsLoad = await LoadFontsList(true);  // load fonts list from Load server
             if (rasterFontsLoad == null)
             {
-                SetStatus($"❌ Hiba: raster font lista betöltése sikertelen a {serverLoadKey} (Load) szervernél.", Color.Red);
+                SetStatus($"❌ Hiba: raster font lista betöltése sikertelen a {serverLoadKey} (Load) szervernél.", Theme.Danger);
                 return;
             }
-            SetStatus($"✅ Betöltve {rasterFontsLoad.Count}db raster font a Load ({serverLoadKey}) szerverről.", Color.ForestGreen);
+            SetStatus($"✅ Betöltve {rasterFontsLoad.Count}db raster font a Load ({serverLoadKey}) szerverről.", Theme.Success);
             _rasterFontsLoad = rasterFontsLoad;
 
             var rasterFontsSave = await LoadFontsList(false);  // load fonts list from Save server
             if (rasterFontsSave == null)
             {
-                SetStatus($"❌ Hiba: raster font lista betöltése sikertelen a {serverSaveKey} (Save) szervernél.", Color.Red);
+                SetStatus($"❌ Hiba: raster font lista betöltése sikertelen a {serverSaveKey} (Save) szervernél.", Theme.Danger);
                 return;
             }
-            SetStatus($"✅ Betöltve {rasterFontsSave.Count}db raster font a Save ({serverSaveKey}) szerverről.", Color.ForestGreen);
+            SetStatus($"✅ Betöltve {rasterFontsSave.Count}db raster font a Save ({serverSaveKey}) szerverről.", Theme.Success);
             _rasterFontsSave = rasterFontsSave;
 
             var groupsLoad = await LoadGroupsList(true);  // load groups list from Load server
             if (groupsLoad != null)
             {
                 _groupsLoad = groupsLoad;
-                SetStatus($"✅ Betöltve {groupsLoad.Count}db csoport a Load ({serverLoadKey}) szerverről: {string.Join(", ", groupsLoad.Select(g => g.Name))}", Color.ForestGreen);
+                SetStatus($"✅ Betöltve {groupsLoad.Count}db csoport a Load ({serverLoadKey}) szerverről: {string.Join(", ", groupsLoad.Select(g => g.Name))}", Theme.Success);
             }
 
             var groupsSave = await LoadGroupsList(false);  // load groups list from Save server
             if (groupsSave != null)
             {
                 _groupsSave = groupsSave;
-                SetStatus($"✅ Betöltve {groupsSave.Count}db csoport a Save ({serverSaveKey}) szerverről: {string.Join(", ", groupsSave.Select(g => g.Name))}", Color.ForestGreen);
+                SetStatus($"✅ Betöltve {groupsSave.Count}db csoport a Save ({serverSaveKey}) szerverről: {string.Join(", ", groupsSave.Select(g => g.Name))}", Theme.Success);
             }
 
             string newName = txtSaveName.Text.Trim();
             if (string.IsNullOrEmpty(newName))
             {
-                SetStatus($"❌ Hiba: az új név üres!", Color.Red);
+                SetStatus($"❌ Hiba: az új név üres!", Theme.Danger);
                 return;
             }
 
             string entityType = cmbLoadEntityType.SelectedItem?.ToString() ?? "Timetable";
             if (entityType == "Timetable")
             {
+                // A háttérkép átviteléhez a képlista kell mindkét oldalról.
+                if (!IsSameServer() && !await LoadCrossServerNameTablesAsync(includeLayoutTables: false))
+                {
+                    return;
+                }
                 await SaveTimetableEntityAsync(newName);
             }
             else if (entityType == "Layout")
@@ -820,22 +1095,33 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
                 await LoadAnchorYList(false);
                 await LoadTextColorList(true);
                 await LoadTextColorList(false);
+
+                // A képek, rácsok és menetrendek névtáblái csak akkor kellenek, ha eltérő
+                // szerverre másolunk - egy szerveren belül az eredeti ID a helyes. Az image/list
+                // több megabájt, ezért nem érdemes fölöslegesen letölteni.
+                if (!IsSameServer() && !await LoadCrossServerNameTablesAsync(includeLayoutTables: true))
+                {
+                    return;
+                }
+
                 await SaveLayoutEntityAsync(newName);
             }
             else
             {
-                SetStatus($"❌ Hiba: a kiválasztott elemtípus nem értelmezhető.", Color.Red);
+                SetStatus($"❌ Hiba: a kiválasztott elemtípus nem értelmezhető.", Theme.Danger);
                 return;
             }
+
+            ReportSkipped();
         }
 
         private async Task SaveTimetableEntityAsync(string newName)
         {
-            SetStatus("Timetable mentése elkezdődött...", Color.Black);
+            SetStatus("Timetable mentése elkezdődött...", Theme.Ink);
 
             if (_loadedTimetableItem == null)
             {
-                SetStatus($"❌ Hiba: nincs beolvasott Timetable elem!", Color.Red);
+                SetStatus($"❌ Hiba: nincs beolvasott Timetable elem!", Theme.Danger);
                 return;
             }
 
@@ -847,12 +1133,24 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
                     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
                 });
 
-                RemoveIdProperties(node);
+                var translator = NewTranslator();
+                translator.TranslateTimetable(node);
 
                 if (node is JsonObject nodeObj)
                 {
                     nodeObj["name"] = newName;
+
+                    // A háttérkép átvitele: név szerint keressük a célon, és ha nincs meg,
+                    // feltöltjük. Ha ez sem megy, a mező kimarad - így legalább a menetrend
+                    // létrejön, csak háttérkép nélkül.
+                    if (!await ResolveImageAsync(translator, nodeObj, "imageId", "háttérkép"))
+                    {
+                        nodeObj.Remove("imageId");
+                        NoteSkipped("a háttérkép kimarad a menetrendből - kézzel pótolandó.");
+                    }
                 }
+
+                ReportTranslation(translator);
 
                 DisplayTxtJson(node);
 
@@ -862,32 +1160,396 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
                     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
                 }) ?? "{}";
 
-                StringContent content = new StringContent(jsonOut, Encoding.UTF8, "application/json");
-                string url = $"{_baseSaveUrl}/dynamic-timetable/save";
-                HttpResponseMessage response = await _httpClientSave.PostAsync(url, content);
-                if (response.IsSuccessStatusCode)
+                // Van olyan hiány, amivel a mentés biztosan elbukna? Akkor ne is kezdjük el.
+                if (ReportBlockingProblems()) return;
+
+                // A fordítás lefutott, de még semmit nem írtunk: itt lehet megállítani.
+                if (!ConfirmCopy("Timetable", totalItems: 0, copiedItems: 0))
                 {
-                    SetStatus($"✅ Sikeres mentés a {cmbServerSave.SelectedItem} szerverre.", Color.ForestGreen);
+                    SetStatus("⛔ A mentés megszakadt a felhasználó kérésére - a szerveren semmi nem változott.", Theme.Danger);
+                    return;
+                }
+
+                var result = await PostJsonAsync($"{_baseSaveUrl}/dynamic-timetable/save", jsonOut, "Timetable mentése");
+                if (result.WasSkipped)
+                {
+                    SetStatus("🔍 Száraz futtatás vége - a szerveren semmi nem változott.", Theme.DryRun);
+                }
+                else if (result.Success)
+                {
+                    SetStatus($"✅ Sikeres mentés a {cmbServerSave.SelectedItem} szerverre.", Theme.Success);
                 }
                 else
                 {
-                    string err = await response.Content.ReadAsStringAsync();
-                    SetStatus($"❌ Hiba: {response.StatusCode} - {err}", Color.Red);
+                    SetStatus($"❌ Hiba - {result.Error}", Theme.Danger);
                 }
             }
             catch (Exception ex)
             {
-                SetStatus($"❌ Hiba: {ex.Message}", Color.Red);
+                SetStatus($"❌ Hiba: {ex.Message}", Theme.Danger);
             }
+        }
+
+        /// <summary>
+        /// A szerverek közötti másoláshoz szükséges név -> ID táblák betöltése mindkét oldalról.
+        /// Hamissal tér vissza, ha bármelyik lista nem érhető el: hiányos táblákkal fordítani
+        /// rosszabb, mint el sem kezdeni.
+        /// </summary>
+        private async Task<bool> LoadCrossServerNameTablesAsync(bool includeLayoutTables)
+        {
+            // A képlista mindkét entitástípushoz kell: a layout-elemek képeihez és a menetrend
+            // háttérképéhez egyaránt.
+            if (!await LoadNameTableAsync("image/list", "kép", l => _imagesLoad = l, l => _imagesSave = l))
+                return false;
+
+            if (!includeLayoutTables) return true;
+
+            return await LoadNameTableAsync("grid/list", "rács", l => _gridsLoad = l, l => _gridsSave = l)
+                && await LoadNameTableAsync("dynamic-timetable/list", "dinamikus menetrend",
+                       l => _timetablesLoad = l, l => _timetablesSave = l)
+                // A megálló-kötések átviteléhez:
+                && await LoadNameTableAsync("stop/list", "megálló", l => _stopsLoad = l, l => _stopsSave = l)
+                && await LoadNameTableAsync("state/list", "állapot", l => _statesLoad = l, l => _statesSave = l);
+        }
+
+        private async Task<bool> LoadNameTableAsync(string endpoint, string label,
+            Action<List<NamedEntity>> setLoad, Action<List<NamedEntity>> setSave)
+        {
+            var load = await LoadNamedListAsync(endpoint, true);
+            if (load == null)
+            {
+                SetStatus($"❌ Hiba: a(z) {label} lista betöltése sikertelen a Load szerverről - a másolás nem folytatható.", Theme.Danger);
+                return false;
+            }
+            setLoad(load);
+
+            var save = await LoadNamedListAsync(endpoint, false);
+            if (save == null)
+            {
+                SetStatus($"❌ Hiba: a(z) {label} lista betöltése sikertelen a Save szerverről - a másolás nem folytatható.", Theme.Danger);
+                return false;
+            }
+            setSave(save);
+
+            SetStatus($"✅ Betöltve {load.Count} db {label} a Load, {save.Count} db a Save szerverről.", Theme.Success);
+            return true;
+        }
+
+        /// <summary>
+        /// A szerver a nevek egyediségét kikényszeríti (422 - "A megadott érték már szerepel a
+        /// nyilvántartásban!"). Ezt a mentés elején ellenőrizzük, hogy ne a művelet végén derüljön
+        /// ki - főleg a szerveren belüli duplikálásnál, ahol az alapértelmezett név mindig
+        /// ütközik a forráséval.
+        /// </summary>
+        private async Task<bool> EnsureFreeNameAsync(string entityType)
+        {
+            string endpoint = entityType == "Layout" ? "layout/list" : "dynamic-timetable/list";
+            var existing = await LoadNamedListAsync(endpoint, fromLoadServer: false);
+            if (existing == null)
+            {
+                SetStatus("⚠️ A névütközés nem ellenőrizhető (a lista nem érhető el) - a mentés folytatódik.", Theme.Warning);
+                return true;
+            }
+
+            string name = txtSaveName.Text.Trim();
+            var clash = existing.FirstOrDefault(e => CopyTranslator.NameEquals(e.Name, name));
+            if (clash == null) return true;
+
+            string suggestion = SuggestFreeName(name, existing);
+            var answer = MessageBox.Show(this,
+                $"A(z) {cmbServerSave.SelectedItem} szerveren már létezik ilyen nevű elem:\n\n"
+                + $"    ID={clash.Id}   \"{clash.Name}\"\n\n"
+                + "A szerver megköveteli a nevek egyediségét, ezért ezt a mentést elutasítaná.\n\n"
+                + $"Javasolt szabad név:\n\n    \"{suggestion}\"\n\n"
+                + "Igen  - folytatás a javasolt névvel\n"
+                + "Nem  - maradjon az eredeti név (a mentés várhatóan elbukik)\n"
+                + "Mégse  - a mentés megszakítása",
+                "Névütközés",
+                MessageBoxButtons.YesNoCancel, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button1);
+
+            if (answer == DialogResult.Cancel)
+            {
+                SetStatus("⛔ A mentés megszakadt: a név már foglalt a cél szerveren.", Theme.Danger);
+                return false;
+            }
+            if (answer == DialogResult.Yes)
+            {
+                txtSaveName.Text = suggestion;
+                SetStatus($"✏️ Az új név: \"{suggestion}\"", Theme.DryRun);
+            }
+            else
+            {
+                SetStatus($"⚠️ A név marad \"{name}\" - a szerver ezt várhatóan elutasítja.", Theme.Warning);
+            }
+            return true;
+        }
+
+        /// <summary>Szabad nevet keres "név (2)", "név (3)" ... alakban.</summary>
+        private static string SuggestFreeName(string name, List<NamedEntity> existing)
+        {
+            // Ha a név már "... (N)" alakú, a számot növeljük, nem fűzünk hozzá újabb zárójelet.
+            var match = Regex.Match(name, @"^(.*?)\s*\((\d+)\)$");
+            string baseName = match.Success ? match.Groups[1].Value : name;
+            int start = match.Success ? int.Parse(match.Groups[2].Value) + 1 : 2;
+
+            for (int i = start; i < start + 1000; i++)
+            {
+                string candidate = $"{baseName} ({i})";
+                if (!existing.Any(e => CopyTranslator.NameEquals(e.Name, candidate)))
+                {
+                    return candidate;
+                }
+            }
+            return $"{baseName} ({DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()})";
+        }
+
+        /// <summary>
+        /// A megálló-kötések (slide-ok) átvitele. A slide köti a layoutot a megállóhoz - enélkül a
+        /// másolat sehol nem jelenik meg. Csak eltérő szerverek között fut: egy szerveren belüli
+        /// duplikálásnál nem szabad, mert két layout nem versenghet ugyanazon a megállón.
+        /// </summary>
+        private async Task CopySlidesAsync(int sourceLayoutId, int newLayoutId)
+        {
+            var sourceSlides = await LoadSlidesForLayoutAsync(sourceLayoutId);
+            if (sourceSlides == null)
+            {
+                NoteSkipped("a megálló-kötések nem olvashatók (slide/list) - a másolatot kézzel kell megállóhoz rendelni.");
+                return;
+            }
+            if (sourceSlides.Count == 0)
+            {
+                SetStatus("ℹ️ A forrás Layout nincs megállóhoz kötve, így nincs mit átvinni.", Theme.Info);
+                return;
+            }
+
+            SetStatus($"📍 {sourceSlides.Count} megálló-kötés átvitele...", Theme.Ink);
+            int created = 0;
+
+            var translator = NewTranslator();
+            foreach (var slide in sourceSlides)
+            {
+                string label = translator.DescribeSlide(slide);
+                var payload = translator.TranslateSlide(slide, newLayoutId);
+                if (payload == null)
+                {
+                    ReportTranslation(translator);
+                    continue;
+                }
+
+                var result = await PostJsonAsync($"{_baseSaveUrl}/slide/save", payload.ToJsonString(),
+                    $"Megálló-kötés: {label}");
+                if (result.Success)
+                {
+                    created++;
+                }
+                else
+                {
+                    NoteSkipped($"a megálló-kötés mentése sikertelen ({label}) - {result.Error}");
+                }
+            }
+
+            if (created > 0)
+            {
+                SetStatus(DryRun
+                    ? $"🔍 [száraz futtatás] {created} megálló-kötés jönne létre."
+                    : $"✅ {created} megálló-kötés létrehozva - a másolat megjelenik ezeken a megállókon.", Theme.Success);
+            }
+        }
+
+        /// <summary>
+        /// Egy layout megálló-kötései. A slide/list-nek nincs szűrt változata, ezért a teljes
+        /// listát kérjük le, és memóriában szűrünk - a mérés szerint ez néhány másodperc.
+        /// </summary>
+        private async Task<List<JsonObject>?> LoadSlidesForLayoutAsync(int layoutId)
+        {
+            return await LoadListAsync("slide/list", fromLoadServer: true, body =>
+            {
+                if (JsonNode.Parse(body) is not JsonArray root) return null;
+                return root.OfType<JsonObject>()
+                           .Where(o => o["layoutId"]?.GetValue<int?>() == layoutId)
+                           .Select(o => (JsonObject)o.DeepClone())
+                           .ToList();
+            });
+        }
+
+        /// <summary>
+        /// A félbemaradt layout eltakarítása. A layout/remove kaszkádol az elemekre, tehát egyetlen
+        /// hívás elég; külön elem-takarítás nem kell.
+        /// </summary>
+        private async Task RollbackLayoutAsync(int layoutId)
+        {
+            if (DryRun || layoutId <= 0) return;
+
+            SetStatus($"↩️ Visszavonás: a hiányos Layout (ID={layoutId}) törlése...", Theme.DryRun);
+            try
+            {
+                var (success, body, status) = await DeleteLayoutAsync(layoutId);
+
+                // A layout/remove kaszkádol az elemekre, de a megálló-kötésekre NEM: ha a
+                // layouthoz slide tartozik, 422-vel elutasítja a törlést. Ilyenkor előbb a
+                // kötéseket kell elbontani.
+                if (!success && status == System.Net.HttpStatusCode.UnprocessableEntity)
+                {
+                    if (await RemoveSlidesOfLayoutAsync(layoutId))
+                    {
+                        (success, body, status) = await DeleteLayoutAsync(layoutId);
+                    }
+                }
+
+                if (success)
+                {
+                    SetStatus($"↩️ A hiányos Layout (ID={layoutId}) törölve - a szerveren nem maradt félkész elem.", Theme.DryRun);
+                    return;
+                }
+                SetStatus($"❌ A visszavonás nem sikerült - {ApiErrorFormatter.Format(status, body)}", Theme.Danger);
+                SetStatus($"❗ A(z) {layoutId} azonosítójú Layoutot kézzel kell törölni a {cmbServerSave.SelectedItem} szerveren!", Theme.Danger);
+            }
+            catch (Exception ex)
+            {
+                SetStatus($"❌ A visszavonás nem sikerült: {ex.Message}", Theme.Danger);
+                SetStatus($"❗ A(z) {layoutId} azonosítójú Layoutot kézzel kell törölni a {cmbServerSave.SelectedItem} szerveren!", Theme.Danger);
+            }
+        }
+
+        private async Task<(bool Success, string Body, System.Net.HttpStatusCode Status)> DeleteLayoutAsync(int layoutId)
+        {
+            string url = $"{_baseSaveUrl}/layout/remove?id={layoutId}";
+            OperationLog.Request("DELETE", url, null);
+            HttpResponseMessage response = await _httpClientSave.DeleteAsync(url);
+            string body = await response.Content.ReadAsStringAsync();
+            OperationLog.Response((int)response.StatusCode, body);
+            return (response.IsSuccessStatusCode, body, response.StatusCode);
+        }
+
+        /// <summary>A layouthoz tartozó megálló-kötések elbontása, hogy a layout törölhető legyen.</summary>
+        private async Task<bool> RemoveSlidesOfLayoutAsync(int layoutId)
+        {
+            var slides = await LoadListAsync("slide/list", fromLoadServer: false, body =>
+            {
+                if (JsonNode.Parse(body) is not JsonArray root) return null;
+                return root.OfType<JsonObject>()
+                           .Where(o => o["layoutId"]?.GetValue<int?>() == layoutId)
+                           .Select(o => o["id"]?.GetValue<int?>() ?? 0)
+                           .Where(id => id > 0)
+                           .ToList();
+            });
+            if (slides == null || slides.Count == 0) return false;
+
+            SetStatus($"↩️ {slides.Count} megálló-kötés elbontása a visszavonáshoz...", Theme.DryRun);
+            foreach (int slideId in slides)
+            {
+                string url = $"{_baseSaveUrl}/slide/remove?id={slideId}";
+                OperationLog.Request("DELETE", url, null);
+                HttpResponseMessage response = await _httpClientSave.DeleteAsync(url);
+                OperationLog.Response((int)response.StatusCode, await response.Content.ReadAsStringAsync());
+                if (!response.IsSuccessStatusCode) return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// Ha elem maradt ki a fordításból, a felhasználó döntsön: vállalja a hiányos másolatot,
+        /// vagy inkább ne jöjjön létre semmi.
+        /// </summary>
+        /// <summary>
+        /// A mentés előtti előnézet. Ez az egyetlen pont, ahol a művelet még megállítható, ezért
+        /// mindent egy helyen mutat: honnan hova, mi fordult le, és mi marad ki.
+        /// </summary>
+        private bool ConfirmCopy(string entityType, int totalItems, int copiedItems)
+        {
+            var text = new StringBuilder();
+
+            text.AppendLine("MIT MÁSOLUNK");
+            text.AppendLine($"   Típus:     {entityType}");
+            text.AppendLine($"   Forrás:    {cmbServerLoad.SelectedItem}  (ID={txtLoadEntityId.Text.Trim()})");
+            text.AppendLine($"   Cél:       {cmbServerSave.SelectedItem}");
+            text.AppendLine($"   Új név:    \"{txtSaveName.Text.Trim()}\"");
+            if (IsSameServer())
+            {
+                text.AppendLine("   Megjegyzés: azonos szerver - az azonosítók változatlanul maradnak.");
+            }
+            text.AppendLine();
+
+            if (totalItems > 0)
+            {
+                text.AppendLine("ELEMEK");
+                text.AppendLine(copiedItems == totalItems
+                    ? $"   mind a(z) {totalItems} elem átkerül"
+                    : $"   {totalItems} elemből {copiedItems} kerül át, {totalItems - copiedItems} kimarad");
+                text.AppendLine();
+            }
+
+            if (_conversions.Count > 0)
+            {
+                text.AppendLine("ÁTFORDÍTOTT HIVATKOZÁSOK (a cél szerver azonosítóira)");
+                foreach (var pair in _conversions.OrderByDescending(p => p.Value))
+                {
+                    text.AppendLine($"   {pair.Key,-24} {pair.Value,3} db");
+                }
+                text.AppendLine();
+            }
+
+            if (_skipped.Count > 0)
+            {
+                text.AppendLine($"KIMARAD ({_skipped.Count} tétel)");
+                foreach (var item in _skipped)
+                {
+                    text.AppendLine($"   • {item}");
+                }
+                text.AppendLine();
+            }
+
+            if (_unknownFields.Count > 0)
+            {
+                text.AppendLine($"ISMERETLEN MEZŐK ({_unknownFields.Count}) - ezek sem kerülnek át");
+                foreach (var field in _unknownFields)
+                {
+                    text.AppendLine($"   • {field}");
+                }
+                text.AppendLine();
+            }
+
+            text.AppendLine(new string('-', 60));
+            text.AppendLine(DryRun
+                ? "SZÁRAZ FUTTATÁS: a szerverre semmi nem íródik, csak a napló készül el."
+                : $"A fentiek a(z) {cmbServerSave.SelectedItem} szerverre íródnak.");
+
+            using var dialog = new CopyPreviewDialog(text.ToString(), DryRun);
+            bool proceed = dialog.ShowDialog(this) == DialogResult.OK;
+
+            OperationLog.Status($"[előnézet] a felhasználó döntése: {(proceed ? "folytatás" : "megszakítás")}");
+            return proceed;
+        }
+
+        /// <summary>
+        /// A szerver megköveteli, hogy az első elem kép vagy közleményhely legyen. Ez a hiba
+        /// egyébként csak az elemek mentésekor derülne ki - akkor, amikor a fejléc már létrejött.
+        /// </summary>
+        private void WarnIfFirstElementInvalid(JsonArray itemsArray)
+        {
+            if (itemsArray.Count == 0) return;
+
+            // A cél szerver ID-jével dolgozunk, mert a fordítás már lefutott.
+            var first = itemsArray.OrderBy(e => e?["prioritySn"]?.GetValue<int?>() ?? int.MaxValue).FirstOrDefault();
+            if (first?["elementTypeId"]?.GetValue<int?>() is not int typeId) return;
+            if (!_itemTypeSave.TryGetValue(typeId, out string? label)) return;
+
+            bool allowed = label != null
+                && (label.Contains("Image", StringComparison.OrdinalIgnoreCase)
+                    || label.Contains("Announcement", StringComparison.OrdinalIgnoreCase));
+            if (allowed) return;
+
+            SetStatus($"⚠️ Figyelem: az első elem típusa '{label}'. A szerver megköveteli, hogy az első elem "
+                    + "kép vagy közleményhely legyen - a mentés emiatt elutasításra kerülhet.", Theme.Warning);
         }
 
         private async Task SaveLayoutEntityAsync(string newName)
         {
-            SetStatus("Layout mentése elkezdődött...", Color.Black);
+            SetStatus("Layout mentése elkezdődött...", Theme.Ink);
 
             if (_loadedLayoutItem == null)
             {
-                SetStatus($"❌ Hiba: nincs beolvasott Layout elem!", Color.Red);
+                SetStatus($"❌ Hiba: nincs beolvasott Layout elem!", Theme.Danger);
                 return;
             }
 
@@ -899,12 +1561,13 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
                     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
                 });
 
+                var translator = NewTranslator();
+
                 if (node is JsonObject nodeObj)
                 {
                     nodeObj.Remove("id");
                     nodeObj["name"] = newName;
-                    ConvertDisplayId1(nodeObj["displayId"]);
-                    ConvertGroupIds(nodeObj["groupIds"]);
+                    translator.TranslateLayoutHeader(nodeObj);
                 }
 
                 DisplayTxtJson(node);
@@ -915,40 +1578,12 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
                     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
                 }) ?? "{}";
 
-                StringContent content = new StringContent(jsonOut, Encoding.UTF8, "application/json");
-                string url = $"{_baseSaveUrl}/layout/save";
-                HttpResponseMessage response = await _httpClientSave.PostAsync(url, content);
-                if (response.IsSuccessStatusCode)
-                {
-                    SetStatus($"✅ Sikeres brief mentés a {cmbServerSave.SelectedItem} szerverre.", Color.ForestGreen);
-                }
-                else
-                {
-                    string err = await response.Content.ReadAsStringAsync();
-                    SetStatus($"❌ Hiba: {response.StatusCode} - {err}", Color.Red);
-                    return;
-                }
-                //response body contains the saved layout's ID
-                string respBody = await response.Content.ReadAsStringAsync();
-                if (!int.TryParse(respBody.Trim(), out int layoutId))
-                {
-                    SetStatus($"❌ Hiba: a brief mentés nem egy szám ID-t adott vissza: '{respBody}'", Color.Red);
-                    return;
-                }
-                SetStatus($"✅ Az új Layout ID-ja: {layoutId}", Color.ForestGreen);
-                if (layoutId < 10000)
-                {
-                    SetStatus($"❌ Hiba: a brief mentés nem adott vissza megfelelő ID-t! (ID={layoutId})", Color.Red);
-                    return;
-                }
-                // Now save the layout items
-                if (_loadedLayoutItems == null || _loadedLayoutItems.Count == 0)
-                {
-                    SetStatus("Nincs mentendő Layout elem (csak brief fejléc), ezért a mentési folyamat befejezve.", Color.ForestGreen);
-                    return;
-                }
+                // FONTOS: az elemek fordítása MEGELŐZI a fejléc mentését. Így ha valamelyik elem
+                // nem fordítható, a felhasználó még azelőtt dönthet a megszakításról, hogy bármi
+                // létrejönne a szerveren - nem kell utólag takarítani.
                 var itemsArray = new JsonArray();
-                foreach (var layoutItem in _loadedLayoutItems)
+                var savedNames = new List<string>();
+                foreach (var layoutItem in _loadedLayoutItems ?? new List<LayoutItems>())
                 {
                     bool itemIsValid = true;
                     LayoutItems originLayoutItem = layoutItem;
@@ -964,123 +1599,13 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
                         itemObj.Remove("layoutId"); //itemObj["layoutId"] = layoutId;
                         itemObj.Remove("content");
 
-                        // Convert elementTypeId from Load to Save server
-                        if (itemObj["elementTypeId"] is JsonValue etIdValue && etIdValue.TryGetValue(out int etId))
-                        {
-                            if (_itemTypeLoad.TryGetValue(etId, out string? typeLabel) && !string.IsNullOrEmpty(typeLabel))
-                            {
-                                var saveId = _itemTypeSave.FirstOrDefault(kvp => kvp.Value == typeLabel).Key;
-                                if (saveId != 0)
-                                {
-                                    itemObj["elementTypeId"] = saveId;
-                                }
-                                else
-                                {
-                                    itemIsValid = false;
-                                    SetStatus($"⚠️ Figyelem: a Save ({cmbServerSave.SelectedItem}) szerveren nincs '{typeLabel}' elemtípus ({layoutItem.Name}).", Color.Orange);
-                                }
-                            }
-                            else
-                            {
-                                itemIsValid = false;
-                                SetStatus($"⚠️ Figyelem: a Load ({cmbServerLoad.SelectedItem}) szerveren nincs elementTypeId {etId} elem ({layoutItem.Name}).", Color.Orange);
-                            }
-                        }
-                        itemObj.Remove("elementTypeLabel");
+                        string itemName = layoutItem.Name;
 
-                        // Convert anchorX from Load to Save server
-                        if (itemObj["anchorX"] is JsonValue axIdValue && axIdValue.TryGetValue(out int axId))
-                        {
-                            if (_anchorXLoad.TryGetValue(axId, out string? axLabel) && !string.IsNullOrEmpty(axLabel))
-                            {
-                                var saveAxId = _anchorXSave.FirstOrDefault(kvp => kvp.Value == axLabel).Key;
-                                if (saveAxId != 0)
-                                {
-                                    itemObj["anchorX"] = saveAxId;
-                                }
-                                else
-                                {
-                                    itemIsValid = false;
-                                    SetStatus($"⚠️ Figyelem: a Save ({cmbServerSave.SelectedItem}) szerveren nincs '{axLabel}' AnchorX érték ({layoutItem.Name}).", Color.Orange);
-                                }
-                            }
-                            else
-                            {
-                                itemIsValid = false;
-                                SetStatus($"⚠️ Figyelem: a Load ({cmbServerLoad.SelectedItem}) szerveren nincs anchorX {axId} elem ({layoutItem.Name}).", Color.Orange);
-                            }
-                        }
-                        itemObj.Remove("anchorXLabel");
+                        // Az összes hivatkozás fordítása a tesztelt, felülettől független
+                        // fordítóban történik; a kép külön úton megy, mert feltöltéssel járhat.
+                        itemIsValid &= translator.TranslateLayoutElement(itemObj, itemName);
+                        itemIsValid &= await ResolveImageAsync(translator, itemObj, "imageId", itemName);
 
-                        // Convert anchorY from Load to Save server
-                        if (itemObj["anchorY"] is JsonValue ayIdValue && ayIdValue.TryGetValue(out int ayId))
-                        {
-                            if (_anchorYLoad.TryGetValue(ayId, out string? ayLabel) && !string.IsNullOrEmpty(ayLabel))
-                            {
-                                var saveAyId = _anchorYSave.FirstOrDefault(kvp => kvp.Value == ayLabel).Key;
-                                if (saveAyId != 0)
-                                {
-                                    itemObj["anchorY"] = saveAyId;
-                                }
-                                else
-                                {
-                                    itemIsValid = false;
-                                    SetStatus($"⚠️ Figyelem: a Save ({cmbServerSave.SelectedItem}) szerveren nincs '{ayLabel}' AnchorY érték ({layoutItem.Name}).", Color.Orange);
-                                }
-                            }
-                            else
-                            {
-                                itemIsValid = false;
-                                SetStatus($"⚠️ Figyelem: a Load ({cmbServerLoad.SelectedItem}) szerveren nincs anchorY {ayId} elem ({layoutItem.Name}).", Color.Orange);
-                            }
-                        }
-                        itemObj.Remove("anchorYLabel");
-
-                        // Convert fontColor from Load to Save server
-                        if (itemObj["fontColor"] is JsonValue fcIdValue && fcIdValue.TryGetValue(out int fcId))
-                        {
-                            if (_textColorLoad.TryGetValue(fcId, out string? fcLabel) && !string.IsNullOrEmpty(fcLabel))
-                            {
-                                var saveFcId = _textColorSave.FirstOrDefault(kvp => kvp.Value == fcLabel).Key;
-                                if (saveFcId != 0)
-                                {
-                                    itemObj["fontColor"] = saveFcId;
-                                }
-                                else
-                                {
-                                    itemIsValid = false;
-                                    SetStatus($"⚠️ Figyelem: a Save ({cmbServerSave.SelectedItem}) szerveren nincs '{fcLabel}' TextColor érték ({layoutItem.Name}).", Color.Orange);
-                                }
-                            }
-                            else
-                            {
-                                itemIsValid = false;
-                                SetStatus($"⚠️ Figyelem: a Load ({cmbServerLoad.SelectedItem}) szerveren nincs fontColor {fcId} elem ({layoutItem.Name}).", Color.Orange);
-                            }
-                        }
-
-                        // Convert backgroundColor from Load to Save server
-                        if (itemObj["backgroundColor"] is JsonValue bcIdValue && bcIdValue.TryGetValue(out int bcId))
-                        {
-                            if (_textColorLoad.TryGetValue(bcId, out string? bcLabel) && !string.IsNullOrEmpty(bcLabel))
-                            {
-                                var saveBcId = _textColorSave.FirstOrDefault(kvp => kvp.Value == bcLabel).Key;
-                                if (saveBcId != 0)
-                                {
-                                    itemObj["backgroundColor"] = saveBcId;
-                                }
-                                else
-                                {
-                                    itemIsValid = false;
-                                    SetStatus($"⚠️ Figyelem: a Save ({cmbServerSave.SelectedItem}) szerveren nincs '{bcLabel}' TextColor érték ({layoutItem.Name}).", Color.Orange);
-                                }
-                            }
-                            else
-                            {
-                                itemIsValid = false;
-                                SetStatus($"⚠️ Figyelem: a Load ({cmbServerLoad.SelectedItem}) szerveren nincs backgroundColor {bcId} elem ({layoutItem.Name}).", Color.Orange);
-                            }
-                        }
                         if (itemIsValid)
                         {
                             if (itemObj["announcement"] is JsonObject announcement)
@@ -1100,12 +1625,66 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
                     if (itemIsValid)
                     {
                         itemsArray.Add(itemNode);
+                        savedNames.Add(originLayoutItem.Name);
                     }
                     else
                     {
-                        SetStatus($"❌ Hiba: elem kihagyva a másolásból: {originLayoutItem.Name} - {originLayoutItem.ElementTypeLabel}", Color.Red);
+                        SetStatus($"❌ Elem kihagyva a másolásból: {originLayoutItem.Name} - {originLayoutItem.ElementTypeLabel}", Theme.Danger);
                     }
                 }
+
+                ReportTranslation(translator);
+
+                // Van olyan hiány, amivel a mentés biztosan elbukna? Akkor ne is kezdjük el.
+                if (ReportBlockingProblems()) return;
+
+                // Itt még semmit nem írtunk a szerverre: ez az utolsó pont, ahol meg lehet állni.
+                if (!ConfirmCopy("Layout", _loadedLayoutItems?.Count ?? 0, itemsArray.Count))
+                {
+                    SetStatus("⛔ A mentés megszakadt a felhasználó kérésére - a szerveren semmi nem változott.", Theme.Danger);
+                    return;
+                }
+
+                // A szerver az első elemre külön szabályt érvényesít; érdemes előre szólni, mert
+                // ez a hiba csak a mentés végén derülne ki.
+                WarnIfFirstElementInvalid(itemsArray);
+
+                var briefResult = await PostJsonAsync($"{_baseSaveUrl}/layout/save", jsonOut, "Layout fejléc mentése");
+                if (!briefResult.Success)
+                {
+                    SetStatus($"❌ A Layout fejléc mentése sikertelen - {briefResult.Error}", Theme.Danger);
+                    return;
+                }
+
+                int layoutId;
+                if (briefResult.WasSkipped)
+                {
+                    // Száraz futtatásnál nincs valódi ID. A helykitöltő csak azért kell, hogy az
+                    // elemek JSON-ja is összeálljon, és a fordítás eredménye ellenőrizhető legyen.
+                    layoutId = 0;
+                    SetStatus("🔍 [száraz futtatás] a Layout fejléc nem jött létre; az elemek layoutId mezője helykitöltő 0.", Theme.DryRun);
+                }
+                else
+                {
+                    SetStatus($"✅ Sikeres brief mentés a {cmbServerSave.SelectedItem} szerverre.", Theme.Success);
+
+                    //response body contains the saved layout's ID
+                    if (!int.TryParse(briefResult.Body.Trim(), out layoutId) || layoutId <= 0)
+                    {
+                        // A korábbi 10000-es küszöb a PROD2 ID-tartományának véletlene volt, nem
+                        // az API szerződése; egy friss telepítésen hamis hibát jelzett volna.
+                        SetStatus($"❌ Hiba: a fejléc mentése nem érvényes ID-t adott vissza: '{briefResult.Body}'", Theme.Danger);
+                        return;
+                    }
+                    SetStatus($"✅ Az új Layout ID-ja: {layoutId}", Theme.Success);
+                }
+
+                if (itemsArray.Count == 0)
+                {
+                    SetStatus("Nincs mentendő Layout elem (csak brief fejléc), ezért a mentési folyamat befejezve.", Theme.Success);
+                    return;
+                }
+
                 var fullJson = new JsonObject();
                 fullJson["layoutId"] = layoutId;
                 fullJson["elements"] = itemsArray;
@@ -1116,37 +1695,171 @@ private void ConvertRasterFontId(KeyValuePair<string, JsonNode?> kv)
                     WriteIndented = true,
                     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
                 });
-                StringContent contentFull = new StringContent(jsonFull, Encoding.UTF8, "application/json");
-                string urlFull = $"{_baseSaveUrl}/element/save/all";
-                HttpResponseMessage responseFull = await _httpClientSave.PostAsync(urlFull, contentFull);
-                if (responseFull.IsSuccessStatusCode)
+
+                // Az elemnév-feloldó teszi érthetővé a szerver "elements[3].imageId" alakú hibáit.
+                var itemsResult = await PostJsonAsync($"{_baseSaveUrl}/element/save/all", jsonFull,
+                    $"Layout elemek mentése ({itemsArray.Count}db)",
+                    index => index >= 0 && index < savedNames.Count ? savedNames[index] : null);
+
+                if (itemsResult.WasSkipped)
                 {
-                    SetStatus($"✅ Layout elemek ({itemsArray.Count}db) sikeresen mentve a {cmbServerSave.SelectedItem} szerverre.", Color.ForestGreen);
+                    SetStatus("🔍 Száraz futtatás vége - a szerveren semmi nem változott.", Theme.DryRun);
+                }
+                else if (itemsResult.Success)
+                {
+                    SetStatus($"✅ Layout elemek ({itemsArray.Count}db) sikeresen mentve a {cmbServerSave.SelectedItem} szerverre.", Theme.Success);
+
+                    // A megálló-kötés csak szerverek között követi a másolatot; azonos szerveren
+                    // belüli duplikálásnál nem, mert két layout nem versenghet ugyanazon a megállón.
+                    if (!IsSameServer() && int.TryParse(txtLoadEntityId.Text.Trim(), out int sourceLayoutId))
+                    {
+                        await CopySlidesAsync(sourceLayoutId, layoutId);
+                    }
                 }
                 else
                 {
-                    string err = await responseFull.Content.ReadAsStringAsync();
-                    SetStatus($"❌ Hiba Layout elemek mentésekor: {responseFull.StatusCode} - {err}", Color.Red);
+                    SetStatus($"❌ A Layout elemek mentése sikertelen - {itemsResult.Error}", Theme.Danger);
+                    // A fejléc már létrejött, de elemek nélkül használhatatlan: takarítsuk el,
+                    // különben árva layout marad a szerveren.
+                    await RollbackLayoutAsync(layoutId);
                 }
             }
             catch (Exception ex)
             {
-                SetStatus($"❌ Hiba: {ex.Message}", Color.Red);
+                SetStatus($"❌ Hiba: {ex.Message}", Theme.Danger);
             }
         }
+
+        /// <summary>
+        /// Jelzi, ha a szerver olyan mezőt küldött, amit a modell nem ismer. Az ilyen mező a
+        /// deszerializáláskor csendben eldobódik, és a másolatból is kimarad - ez az egyetlen
+        /// jelzés róla, mert az API-nak nincs dokumentációja.
+        ///
+        /// Hamissal tér vissza, ha a felhasználó a talált mezők láttán megszakítja a műveletet.
+        /// </summary>
+        private bool CheckModelFields(string rawJson, Type modelType, string what)
+        {
+            List<string> unknown;
+            try
+            {
+                unknown = ModelFieldGuard.FindUnknownFields(JsonNode.Parse(rawJson), modelType);
+            }
+            catch (Exception ex)
+            {
+                // A mezőellenőrzés nem akadályozhatja a munkát.
+                OperationLog.Status($"[mezőőr] az ellenőrzés nem futott le: {ex.Message}");
+                return true;
+            }
+
+            if (unknown.Count == 0) return true;
+
+            SetStatus($"⚠️ Figyelem: a szerver {unknown.Count} olyan mezőt küldött a(z) {what} elemben, amit ez a program nem ismer - ezek a másolatból KIMARADNAK:", Theme.Warning);
+            foreach (var field in unknown)
+            {
+                SetStatus($"      • {field}", Theme.Warning);
+                _unknownFields.Add($"{what}: {field}");
+            }
+            SetStatus("      (a program frissítésre szorul - a mezőket fel kell venni a modellbe)", Theme.Warning);
+
+            var answer = MessageBox.Show(this,
+                $"A szerver {unknown.Count} olyan mezőt küldött a(z) {what} elemben, amit ez a program nem ismer:\n\n"
+                + FormatFieldList(unknown)
+                + "\n\nEzek a mezők a másolatból KIMARADNAK, vagyis a másolat eltérne az eredetitől.\n\n"
+                + "Folytatja a beolvasást?\n\n"
+                + "Igen  - folytatás, tudomásul véve a hiányt\n"
+                + "Nem  - a művelet megszakítása, a beolvasott elem eldobása",
+                $"Ismeretlen mezők - {what}",
+                MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+
+            bool proceed = answer == DialogResult.Yes;
+            OperationLog.Status($"[mezőőr] a felhasználó döntése: {(proceed ? "folytatás" : "megszakítás")}");
+            return proceed;
+        }
+
+        /// <summary>
+        /// A betöltött elem eldobása. Így nem marad félig betöltött állapot a memóriában, amit a
+        /// felhasználó később véletlenül elmenthetne.
+        /// </summary>
+        private void DiscardLoadedEntity(string reason)
+        {
+            _loadedTimetableItem = null;
+            _loadedLayoutItem = null;
+            _loadedLayoutItems = null;
+            _unknownFields.Clear();
+            txtSaveName.Text = "";
+            txtJson.Text = "";
+            SetStatus("⛔ " + reason, Theme.Danger);
+        }
+
+        /// <summary>Hosszú listát nem érdemes egy üzenetablakba zsúfolni.</summary>
+        private static string FormatFieldList(List<string> fields)
+        {
+            const int maxShown = 20;
+            var shown = fields.Take(maxShown).Select(f => "    • " + f);
+            string text = string.Join(Environment.NewLine, shown);
+            if (fields.Count > maxShown)
+                text += Environment.NewLine + $"    ... és még {fields.Count - maxShown} db (a teljes lista a naplóban)";
+            return text;
+        }
+
+        // Base64 tartalmak, amiket nincs értelme a nézőben megmutatni.
+        private static readonly string[] LargeContentFields =
+            { "content", "imageContent", "rasterContent", "file" };
 
         private void DisplayTxtJson(object? obj, bool append = false)
         {
             if (obj == null) return;
-            string json = JsonSerializer.Serialize(obj, new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
-            string shortJson = Regex.Replace(json, "\"(content|imageContent)\":\\s*\"[^\"]*\"", "\"$1\": \"...xxx...\"");
+
+            // A nagy tartalmakat már a fa szintjén cseréljük ki, nem utólag reguláris
+            // kifejezéssel: így nem kell több megabájtos szöveget legenerálni, hogy aztán
+            // kivágjunk belőle. A klón azért kell, hogy a MENTENDŐ fát ne csonkítsuk meg.
+            JsonNode? node = obj is JsonNode existing
+                ? existing.DeepClone()
+                : JsonSerializer.SerializeToNode(obj);
+            if (node == null) return;
+
+            ReplaceLargeContent(node);
+
+            string json = node.ToJsonString(new JsonSerializerOptions
+            {
+                WriteIndented = true,
+                Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+            });
+
             if (append)
             {
-                txtJson.AppendText((string.IsNullOrEmpty(txtJson.Text) ? "" : Environment.NewLine) + shortJson);
+                txtJson.AppendText((string.IsNullOrEmpty(txtJson.Text) ? "" : Environment.NewLine) + json);
             }
             else
             {
-                txtJson.Text = shortJson;
+                txtJson.Text = json;
+            }
+        }
+
+        private static void ReplaceLargeContent(JsonNode? node)
+        {
+            if (node is JsonObject obj)
+            {
+                // A kulcsokról másolat kell: az értékadás iteráció közben módosítaná a gyűjteményt.
+                foreach (string key in obj.Select(kv => kv.Key).ToList())
+                {
+                    bool isLarge = LargeContentFields.Contains(key, StringComparer.OrdinalIgnoreCase);
+                    if (isLarge && obj[key] is JsonValue value && value.TryGetValue(out string? text) && text != null)
+                    {
+                        obj[key] = $"...({text.Length} karakter kihagyva)...";
+                    }
+                    else
+                    {
+                        ReplaceLargeContent(obj[key]);
+                    }
+                }
+            }
+            else if (node is JsonArray array)
+            {
+                foreach (var item in array)
+                {
+                    ReplaceLargeContent(item);
+                }
             }
         }
     }

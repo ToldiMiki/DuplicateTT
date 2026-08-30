@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <!-- A teszt-projekt ezen a mappán belül van; enélkül a fő projekt is megpróbálná
+         lefordítani a teszteket (az SDK alapból minden .cs fájlt bevesz). -->
+    <Compile Remove="SmartPageDuplicate.Tests\**" />
+    <None Remove="SmartPageDuplicate.Tests\**" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+	<PublishTrimmed>false</PublishTrimmed>
+    <!-- A verzió az ablak címsorában is megjelenik, hogy egy hibajelentésből kiderüljön,
+         melyik példány futott. -->
+    <AssemblyName>SmartPageDuplicate</AssemblyName>
+    <RootNamespace>SmartPageDuplicate</RootNamespace>
+    <Version>2.0.0</Version>
+    <Product>SmartPage Duplicate</Product>
+    <AssemblyTitle>SmartPage Duplicate</AssemblyTitle>
+  </PropertyGroup>
+
+</Project>

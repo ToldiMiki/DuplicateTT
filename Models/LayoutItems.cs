@@ -1,8 +1,9 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace SmartpageTimetableDuplicateV1.Models
+namespace SmartPageDuplicate.Models
 {
     public class LayoutItems
     {
@@ -111,11 +112,12 @@ namespace SmartpageTimetableDuplicateV1.Models
         [JsonPropertyName("defaultText")]
         public string? DefaultText { get; set; }
 
-        [JsonPropertyName("textAnnouncements")]
-        public object? TextAnnouncements { get; set; }
-
-        [JsonPropertyName("imageAnnouncements")]
-        public object? ImageAnnouncements { get; set; }
+        // A backend a közlemény elemeit "items" néven küldi. Korábban itt "textAnnouncements" és
+        // "imageAnnouncements" szerepelt - ilyen mezőt a szerver nem ad, így az items tartalma
+        // beolvasáskor eldobódott, mentéskor pedig a két nem létező mező null-ként kimaradt.
+        // A tömb elemeinek szerkezete nincs dokumentálva, ezért nyers JSON-ként megy át.
+        [JsonPropertyName("items")]
+        public List<JsonElement>? Items { get; set; }
 
         [JsonPropertyName("groupIds")]
         public object? GroupIds { get; set; }

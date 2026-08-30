@@ -20,3 +20,5 @@ obj/
 
 # Build outputs
 publish/
+# Teszt kimenet
+TestResults/

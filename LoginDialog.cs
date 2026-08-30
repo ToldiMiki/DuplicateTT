@@ -9,7 +9,7 @@ using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
-namespace SmartpageTimetableDuplicateV1
+namespace SmartPageDuplicate
 {
     /// <summary>
     /// Modal dialog for entering username and password, then authenticating against the Smartpage auth-server backend.
@@ -50,74 +50,127 @@ namespace SmartpageTimetableDuplicateV1
             SetupUI();
         }
 
+        private static Font UiFont(float size = 9F, FontStyle style = FontStyle.Regular)
+            => new Font("Segoe UI", size, style);
+
         private void SetupUI()
         {
-            this.Text = $"Bejelentkezés - {_serverKey}";
+            this.Text = "Bejelentkezés";
             this.FormBorderStyle = FormBorderStyle.FixedDialog;
             this.MaximizeBox = false;
             this.MinimizeBox = false;
             this.StartPosition = FormStartPosition.CenterParent;
-            this.Size = new Size(310, 210);
+            this.ClientSize = new Size(330, 232);
+            this.BackColor = Theme.Surface;
+            this.Font = UiFont();
 
-            // Label for username
-            Label lblUsername = new Label
+            // Fejléc a márka színével, benne a szerver megnevezésével: bejelentkezéskor ez a
+            // legfontosabb információ - melyik környezetbe lépünk be.
+            Panel header = new Panel
             {
-                Text = "Felhasználónév:",
-                Location = new Point(10, 15),
-                Size = new Size(270, 20)
+                Location = new Point(0, 0),
+                Size = new Size(this.ClientSize.Width, 52),
+                BackColor = Theme.Brand
             };
-            this.Controls.Add(lblUsername);
+            header.Paint += (s, e) =>
+            {
+                using var brush = new SolidBrush(Theme.Accent);
+                e.Graphics.FillRectangle(brush, 0, header.Height - 3, header.Width, 3);
+            };
+            header.Controls.Add(new Label
+            {
+                Text = "Bejelentkezés",
+                Font = UiFont(11F),
+                ForeColor = Color.White,
+                BackColor = Color.Transparent,
+                Location = new Point(14, 7),
+                Size = new Size(200, 22)
+            });
+            header.Controls.Add(new Label
+            {
+                Text = _serverKey + " szerver",
+                Font = UiFont(8.5F, FontStyle.Bold),
+                ForeColor = Theme.Accent,
+                BackColor = Color.Transparent,
+                Location = new Point(16, 29),
+                Size = new Size(200, 16)
+            });
+            this.Controls.Add(header);
 
-            // TextBox for username
+            int y = 68;
+            this.Controls.Add(new Label
+            {
+                Text = "Felhasználónév",
+                Location = new Point(16, y),
+                Size = new Size(280, 18),
+                ForeColor = Theme.InkSoft
+            });
             TextBox txtUsername = new TextBox
             {
                 Name = "txtUsername",
-                Location = new Point(10, 35),
-                Size = new Size(270, 24)
+                Location = new Point(16, y + 19),
+                Size = new Size(298, 25),
+                BorderStyle = BorderStyle.FixedSingle,
+                Font = UiFont()
             };
             this.Controls.Add(txtUsername);
 
-            // Label for password
-            Label lblPassword = new Label
+            y += 54;
+            this.Controls.Add(new Label
             {
-                Text = "Jelszó:",
-                Location = new Point(10, 65),
-                Size = new Size(270, 20)
-            };
-            this.Controls.Add(lblPassword);
-
-            // TextBox for password (masked)
+                Text = "Jelszó",
+                Location = new Point(16, y),
+                Size = new Size(280, 18),
+                ForeColor = Theme.InkSoft
+            });
             TextBox txtPassword = new TextBox
             {
                 Name = "txtPassword",
-                Location = new Point(10, 85),
-                Size = new Size(270, 24),
-                UseSystemPasswordChar = true
+                Location = new Point(16, y + 19),
+                Size = new Size(298, 25),
+                UseSystemPasswordChar = true,
+                BorderStyle = BorderStyle.FixedSingle,
+                Font = UiFont()
             };
             this.Controls.Add(txtPassword);
 
-            // Login button
-            Button btnLogin = new Button
-            {
-                Text = "Belépés",
-                Location = new Point(100, 125),
-                Size = new Size(80, 30),
-                Name = "btnLogin"
-            };
-            btnLogin.Click += BtnLogin_Click;
-            this.Controls.Add(btnLogin);
-
-            // Cancel button
+            y += 58;
             Button btnCancel = new Button
             {
                 Text = "Mégse",
-                Location = new Point(190, 125),
-                Size = new Size(80, 30),
-                DialogResult = DialogResult.Cancel
+                Location = new Point(16, y),
+                Size = new Size(100, 32),
+                DialogResult = DialogResult.Cancel,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Theme.Surface,
+                ForeColor = Theme.InkSoft,
+                Font = UiFont(),
+                Cursor = Cursors.Hand
             };
+            btnCancel.FlatAppearance.BorderColor = Theme.Rule;
             this.Controls.Add(btnCancel);
 
+            Button btnLogin = new Button
+            {
+                Text = "Belépés",
+                Name = "btnLogin",
+                Location = new Point(194, y),
+                Size = new Size(120, 32),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Theme.Brand,
+                ForeColor = Color.White,
+                Font = UiFont(9.5F, FontStyle.Bold),
+                Cursor = Cursors.Hand
+            };
+            btnLogin.FlatAppearance.BorderSize = 0;
+            btnLogin.FlatAppearance.MouseOverBackColor = Theme.AccentHover;
+            btnLogin.Click += BtnLogin_Click;
+            this.Controls.Add(btnLogin);
+
+            // Enter = belépés, Esc = mégse.
+            this.AcceptButton = btnLogin;
             this.CancelButton = btnCancel;
+            txtUsername.Select();
         }
 
         // A hibaválasz gyakran nyers HTML (pl. nginx 404-es alapoldala, ha a szerver nem
@@ -154,7 +207,8 @@ namespace SmartpageTimetableDuplicateV1
             }
 
             string username = txtUsername.Text.Trim();
-            string password = txtPassword.Text.Trim();
+            // A jelszóban a szóköz értékes karakter - itt nem szabad levágni.
+            string password = txtPassword.Text;
 
             if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
             {
@@ -250,6 +304,16 @@ namespace SmartpageTimetableDuplicateV1
             // This method is called by the designer or can be left empty if controls are set up programmatically
             this.SuspendLayout();
             this.ResumeLayout(false);
+        }
+
+        /// <summary>A dialógus saját HttpClientHandlerét a Form.Dispose nem takarítja el.</summary>
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _httpClientHandler?.Dispose();
+            }
+            base.Dispose(disposing);
         }
     }
 }

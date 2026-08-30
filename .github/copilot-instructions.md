@@ -1,65 +1,134 @@
 ## Quick context
 
-- This is a small Windows Forms utility (WinForms) that duplicates Smartpage dynamic timetables by calling the Smartpage HTTP backend.
-- UI + HTTP logic live in `MainForm.cs`. Data models are in `Models/TimetableItem.cs`.
+- Windows Forms segédeszköz (net10.0-windows), ami Smartpage **dinamikus menetrendeket** és
+  **layoutokat** másol: szerveren belül (duplikálás) és szerverek között, oda-vissza.
+- A backend HTTP API-ját hívja. A szerveren **nincs** `copy` vagy `duplicate` végpont —
+  a másolást ez az eszköz építi fel lekérdezésekből és mentésekből.
+- Az API-hoz nincs dokumentáció (a Swagger 500-at ad). A felderített referencia:
+  **[`docs/smartpage-api.md`](../docs/smartpage-api.md)** — végponttérkép, hibaformátum,
+  kikényszerített üzleti szabályok, szerverek közötti eltérések. Olvasd el, mielőtt
+  API-hívást írsz vagy módosítasz.
 
 ## Big picture
 
-- Main components:
-  - `MainForm.cs` — UI and the application's HTTP client logic. Contains server URL map (`_serverUrls`), load/save flows and status UI.
-  - `Models/TimetableItem.cs` — JSON-deserialized model (includes `DynamicRow` / `DynamicCell`).
-  - Project file `DuplicateTT.csproj` — targets `net10.0-windows` and enables WinForms.
+| Fájl | Szerep |
+|---|---|
+| `Copy/CopyTranslator.cs` | **a fordítási logika** - felülettől és hálózattól független, tesztelt |
+| `Copy/ServerCatalog.cs` | egy szerver névtáblái (a fordítás bemenete) |
+| `Copy/TranslationReport.cs` | a fordítás jelentése: mi maradt ki, mi fordult át, mi blokkol |
+| `SmartPageDuplicate.Tests/` | xUnit tesztek; minden P0/P1-es hibához tartozik egy |
+| `MainForm.cs` | UI + HTTP + a fordító vezérlése |
+| `MainForm.Designer.cs` | kézzel írt UI-felépítés, nem a designer generálta |
+| `LoginDialog.cs` | bejelentkezés az auth-server-backendhez, token + session megszerzése |
+| `SmartpageApiClient.cs` | UI-mentes wrapper a listalekérdezésekhez (a Load/Save hívások még nem itt vannak) |
+| `Models/TimetableItem.cs` | menetrend: `DynamicRow` / `DynamicCell` |
+| `Models/LayoutItem.cs` | layout fejléc (brief) |
+| `Models/LayoutItems.cs` | layout-elem + beágyazott `Announcement` |
+| `Models/ElementType.cs` | elemtípus |
 
-- Data flow summary: user enters an ID → `load-brief` and `load` endpoints are called (GET). The response is deserialized into `TimetableItem`. On save, a small JSON (name, width, height, groupIds) is POSTed to `save-brief`.
+**Szerverkulcsok** (`_baseUrls` a `MainForm.cs`-ben, `_authUrls` a `LoginDialog.cs`-ben):
+`DEV`, `DEMO`, `PROD`, `PROD2`. Új szerver felvételéhez **mindkét** szótárat bővíteni kell,
+plusz a két ComboBox inicializálóját a `MainForm` konstruktorában.
 
-## Important implementation patterns and conventions
+## Adatfolyam
 
-- HTTP headers: every request sets an Authorization header with a bearer token and a `sessionid` header. See `btnLoad_Click` and `btnSave_Click` in `MainForm.cs` for exact usage.
-- Serialization: uses `System.Text.Json` with `PropertyNameCaseInsensitive = true` for deserializing backend responses and `JsonNamingPolicy.CamelCase` when composing the minimal save payload.
-- Minimal save payload example (constructed in `btnSave_Click`):
+**Menetrend beolvasása:** `GET dynamic-timetable/load?id={id}` → `TimetableItem`.
+**Menetrend mentése:** a modellt JSON-fává szerializálja, `CopyTranslator.TranslateTimetable`
+végigjárja (azonosítókat töröl vagy fordít), majd `POST dynamic-timetable/save`.
 
-```json
-{
-  "name": "New name",
-  "width": 1920,
-  "height": 1080,
-  "groupIds": [1,2]
-}
-```
+**Layout beolvasása:** `GET layout/load/{id}` (fejléc) + `GET element/list/layoutId?layoutId={id}` (elemek).
+**Layout mentése:** `POST layout/save` → visszakapott új ID → `POST element/save/all`.
 
-- Server endpoints are defined in `_serverUrls` (DEV/DEMO/PROD). To change endpoints, edit `_serverUrls` in `MainForm.cs`.
-- UI conventions: status text is updated via `SetStatus(string, Color)` which sets both message and color. Async event handlers are `async void` (typical for WinForms event handlers).
+> Az `element/save/all` **teljes cserét** végez: törli a layout összes elemét, és újakat
+> hoz létre. Nem hozzáfűz.
 
-## Build / publish / run workflows
+## A központi elv: ID-k helyett nevek
 
-- Build with dotnet (PowerShell):
+A szerverek között az ID-k nem hordozhatók, a **nevek** viszont stabilak. Minden
+hivatkozást név szerint kell újrakeresni a cél szerveren:
+
+| Mező | Párosítás alapja |
+|---|---|
+| `displayId` | kijelző neve |
+| `groupIds` | csoportnév |
+| `rasterFontId` | `ttFontName` + `size` |
+| `elementTypeId` | `typeLabel` |
+| `anchorX`, `anchorY`, `fontColor`, `backgroundColor` | enum `label` |
+| `imageId`, `gridId`, `dynamicTimetableId` | név |
+
+**Névösszehasonlításnál mindig `Trim()`** — a PROD-on van olyan fontcsalád, aminek a neve
+záró szóközzel szerepel (`"SourceSans3-Bold "`), a DEMO-n anélkül.
+
+**Azonos szerveren belül nem szabad fordítani** — ott az eredeti azonosító a helyes. A
+megkülönböztetés a `CopyTranslator.IsSameServer` értékén múlik, amit a `MainForm.NewTranslator()`
+állít be a két legördülő összehasonlításából. Ugyanez az elágazás dönt a megálló-kötések
+átviteléről is.
+
+## Konvenciók
+
+- **Szerializálás:** beolvasáskor `PropertyNameCaseInsensitive = true`; mentéskor
+  `JsonNamingPolicy.CamelCase` + `DefaultIgnoreCondition = WhenWritingNull`.
+- **JSON-manipuláció:** `System.Text.Json.Nodes` (`JsonNode` / `JsonObject` / `JsonArray`).
+  Számértéket `JsonValue.ReplaceWith(...)`-tal kell cserélni — a `parentObj[key] = ...`
+  minta csak akkor működik, ha tényleg objektum van a kezünkben.
+- **Státuszüzenet:** `SetStatus(string, Color)` — zöld = siker, narancs = figyelmeztetés,
+  piros = hiba. Magyar nyelvű, emoji-előtaggal.
+- **Eseménykezelők:** `async void` (WinForms konvenció).
+- **TLS:** a tanúsítvány-ellenőrzés csak a `smartpage-dev.hclinear.hu` hosztra van
+  megkerülve (`CertBypassHost`). Ne tágítsd globálisra.
+- **HttpClient:** a Load és a Save **külön példány**, közös handlerrel. Ne vond össze őket:
+  az `ApplyAuthHeaders` törli a fejléceket, így egy közös példány a másik oldal
+  hitelesítését is elrontaná.
+
+## Hibakezelés
+
+A backend strukturált, magyar hibákat ad (`fieldErrors` / `logicalErrors`, 422). Ezeket
+**bontsd ki**, ne nyers JSON-ként írd a státuszmezőbe. A formátumot és a visszatérő
+üzeneteket a [`docs/smartpage-api.md`](../docs/smartpage-api.md) 3. fejezete írja le.
+
+Mentés előtt érdemes ellenőrizni a szerver üzleti szabályait (első elem típusa, háttérkép
+felbontása, névegyediség) — lásd ugyanott a 4. fejezetet.
+
+## Ismert korlátok
+
+- A raszterfontok **nem vihetők át** szerverek között: a tartalmuk nem olvasható ki az
+  API-ból (a `save` fájlt követel, a `load` nem ad vissza egyet sem). Hiányzó fontnál a
+  művelet el sem indul, hanem megmondja, mit kell kézzel feltölteni.
+- A képfeltöltésnél a szerver **újrakódolhatja** a képet (4 bites paletta → 8 bites). A
+  tartalom nem sérül, de byte-azonosságra nem szabad építeni.
+- A HTTP-hívások még a `MainForm`-ban vannak, nem a `SmartpageApiClient`-ben. A fordítás
+  viszont már külön, tesztelt osztályban van — a tesztelhetőség szempontjából ez a fontos.
+
+## Build / futtatás
 
 ```powershell
-dotnet build "c:\Users\perczelg\Documents\_Munka_\Hermész\-=PeGe tools=-\SmartpageDuplicates\DuplicateTT\DuplicateTT.csproj"
+dotnet build "SmartPageDuplicate.csproj"
 ```
 
-- A VS Code task exists in the workspace for building and for publishing a self-contained exe. In this repo the `csproj` is `DuplicateTT.csproj` and target framework is `net10.0-windows`.
-- Publish self-contained exe (release, win-x64) — this matches the existing task that produces a single-file exe:
+Önálló exe (a `.vscode/tasks.json`-ban is szerepel):
 
 ```powershell
-dotnet publish "DuplicateTT.csproj" -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true
+dotnet publish "SmartPageDuplicate.csproj" -c Release -r win-x64 --self-contained true `
+  /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true
 ```
 
-## Typical change areas and safe edits
+## Tesztek
 
-- If you need to modify API endpoints, update `_serverUrls` in `MainForm.cs` and keep the same `load-brief`, `load`, `save-brief` paths.
-- When changing the JSON model shape, update `Models/TimetableItem.cs`. The app relies on the presence of `Width`, `Height` and `GroupIds` when saving.
-- Keep JSON naming policy: backend responses use mixed case, so deserialization uses case-insensitive options; save payloads are camelCase.
+```powershell
+dotnet test SmartPageDuplicate.Tests\SmartPageDuplicate.Tests.csproj
+```
 
-## Quick examples for the agent
+A fordítási logika (`Copy/CopyTranslator.cs`) szándékosan nem ismer sem felületet, sem
+hálózatot: bemenet a nyers JSON és a két névtábla, kimenet a módosított JSON és egy jelentés.
+Éppen ez az a rész, ahol a csendes adatvesztések keletkeztek, ezért itt van a tesztek súlypontja.
 
-- To add a new server alias, add a key/value to `_serverUrls` and add it to the two ComboBox initializers (`cmbServerLoad.Items.AddRange`, `cmbServerSave.Items.AddRange`).
-- To show the full JSON returned by the backend, the app serializes `TimetableItem` with `WriteIndented = true` into `txtJson`.
+**Ha a fordításhoz nyúlsz, előbb írj rá tesztet.** A meglévők mindegyike egy konkrét, mért
+hibához tartozik, és mutációval ellenőrizve is elbukik, ha a javítást visszaveszed.
 
-## Files to inspect for more context
+## Ha módosítasz
 
-- `MainForm.cs` — UI + HTTP logic
-- `Models/TimetableItem.cs` — backend model mapping
-- `DuplicateTT.csproj` — target framework and WinForms settings
-
-If anything here is unclear or you want additional patterns included (examples of HTTP error handling, tests, or CI steps), tell me which area to expand and I will iterate.
+- **Új mező a backend válaszában** → vedd fel a `Models/` megfelelő osztályába, különben a
+  másoláson **csendben elveszik** (így veszett el eddig a `DynamicCell.delayThreshold`).
+- **Új végpont** → előbb nézd meg a `docs/smartpage-api.md` térképét; ha nincs benne,
+  `OPTIONS`-szel deríthető fel (a módszer a fájl 7. fejezetében).
+- **Író hívás tesztelése** → soha ne a PROD-on. Homokozó szerverre van szükség.
