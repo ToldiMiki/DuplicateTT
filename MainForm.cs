@@ -58,8 +58,18 @@ namespace SmartpageTimetableDuplicateV1
         private List<NamedEntity> _timetablesLoad = new List<NamedEntity>();
         private List<NamedEntity> _timetablesSave = new List<NamedEntity>();
 
+        // A megálló-kötésekhez (slide): a megállók és az állapotok névtáblái.
+        private List<NamedEntity> _stopsLoad = new List<NamedEntity>();
+        private List<NamedEntity> _stopsSave = new List<NamedEntity>();
+        private List<NamedEntity> _statesLoad = new List<NamedEntity>();
+        private List<NamedEntity> _statesSave = new List<NamedEntity>();
+
         // A másolás közben kihagyott dolgok, hogy a művelet végén egyben látszódjanak.
         private readonly List<string> _skipped = new List<string>();
+
+        // Olyan hiányok, amikkel a mentés biztosan elbukna - ilyenkor el sem indítjuk. Tipikusan
+        // hiányzó raszterfont: azt az API-n keresztül nem lehet átvinni, kézzel kell pótolni.
+        private readonly List<string> _blockingProblems = new List<string>();
 
         // A beolvasott elemben talált ismeretlen mezők. Azért marad meg a mentésig, mert a
         // beolvasás és a mentés között eltelhet idő, és a figyelmeztetés kicsúszhat a képből.
@@ -72,6 +82,32 @@ namespace SmartpageTimetableDuplicateV1
         {
             _conversions.TryGetValue(what, out int count);
             _conversions[what] = count + 1;
+        }
+
+        /// <summary>
+        /// Ha van olyan hiány, amivel a mentés biztosan elbukna, egyben jelenti, és igazzal tér
+        /// vissza. Ilyenkor el sem indítjuk a műveletet - a szerver úgyis elutasítaná, csak
+        /// érthetetlenebb üzenettel és a folyamat közepén.
+        /// </summary>
+        private bool ReportBlockingProblems()
+        {
+            if (_blockingProblems.Count == 0) return false;
+
+            SetStatus("❌ A másolás nem indítható el, mert a cél szerverről hiányzik:", Color.Red);
+            foreach (string problem in _blockingProblems.Distinct())
+            {
+                SetStatus($"      • {problem}", Color.Red);
+            }
+            SetStatus("   A raszterfontok az API-n keresztül nem vihetők át - előbb kézzel fel kell tölteni őket a cél szerverre.", Color.Red);
+
+            MessageBox.Show(this,
+                "A másolás nem folytatható, mert a cél szerverről hiányzik:\n\n"
+                + FormatFieldList(_blockingProblems.Distinct().ToList())
+                + "\n\nA raszterfontok az API-n keresztül nem vihetők át, ezért ezeket előbb kézzel "
+                + "fel kell tölteni a cél szerverre. Utána a másolás megismételhető.",
+                "Hiányzó raszterfont",
+                MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return true;
         }
 
         // In-memory auth/session values (UI fields removed)
@@ -514,12 +550,8 @@ namespace SmartpageTimetableDuplicateV1
                     var propName = kv.Key;
                     if (propName.Equals("imageId", StringComparison.OrdinalIgnoreCase))
                     {
-                        // Ha Load szerver != Save szerver, törölni kell a háttérképet
-                        if (!IsSameServer())
-                        {
-                            toRemove.Add(propName);
-                            NoteSkipped($"az ID={kv.Value} háttérkép kimarad, mert a Load és Save szerver különböző - kézzel pótolandó.");
-                        }
+                        // A háttérképet nem bántjuk: a hívó kezeli (név szerinti keresés, és ha
+                        // a célon nincs meg, feltöltés). Korábban itt egyszerűen törlődött.
                     }
                     else if (propName.Equals("imageContent", StringComparison.OrdinalIgnoreCase))
                     {
@@ -667,6 +699,120 @@ namespace SmartpageTimetableDuplicateV1
         }
 
         /// <summary>
+        /// A kép fordítása név szerint, és ha a cél szerveren nincs meg, feltöltés a forrásból.
+        /// A mérés szerint erre szükség van: PROD -> DEMO irányban a képnevek 84%-a hiányzik a
+        /// célról, tehát a puszta névkeresés ott a layoutok többségét használhatatlanná tenné.
+        /// </summary>
+        private async Task<bool> TryConvertImageAsync(JsonObject itemObj, string field, string itemName)
+        {
+            if (IsSameServer()) return true;
+            if (itemObj[field] is not JsonValue value || !value.TryGetValue(out int loadId)) return true;
+
+            var loadImage = _imagesLoad.FirstOrDefault(e => e.Id == loadId);
+            if (loadImage == null)
+            {
+                NoteSkipped($"a Load ({cmbServerLoad.SelectedItem}) szerveren nincs kép ezzel az azonosítóval: {loadId} ({itemName}).");
+                return false;
+            }
+
+            // 1. Van-e már ilyen nevű kép a célon? Ez a gyakoribb eset.
+            var saveImage = _imagesSave.FirstOrDefault(e => NameEquals(e.Name, loadImage.Name));
+            if (saveImage != null)
+            {
+                if (saveImage.Id != loadId) NoteConversion("kép");
+                itemObj[field] = saveImage.Id;
+                return true;
+            }
+
+            // 2. Nincs meg - fel kell tölteni. Száraz futtatásnál nem töltünk fel semmit.
+            if (DryRun)
+            {
+                SetStatus($"🔍 [száraz futtatás] a(z) \"{loadImage.Name}\" kép feltöltésre kerülne a {cmbServerSave.SelectedItem} szerverre ({itemName}).", Color.RoyalBlue);
+                NoteConversion("feltöltendő kép");
+                return true;
+            }
+
+            int? uploadedId = await UploadImageAsync(loadId, loadImage.Name);
+            if (uploadedId == null)
+            {
+                NoteSkipped($"a(z) \"{loadImage.Name}\" kép feltöltése nem sikerült ({itemName}).");
+                return false;
+            }
+
+            // A frissen feltöltött kép bekerül a névtáblába: ha több elem is hivatkozik rá,
+            // a következő már megtalálja, és nem töltjük fel kétszer.
+            _imagesSave.Add(new NamedEntity(uploadedId.Value, loadImage.Name));
+            NoteConversion("feltöltött kép");
+            itemObj[field] = uploadedId.Value;
+            return true;
+        }
+
+        /// <summary>
+        /// Kép átvitele a Load szerverről a Save szerverre. A tartalom base64-ként utazik.
+        ///
+        /// A szerver a feltöltött képet újrakódolhatja: egy 4 bites palettás PNG 8 bitesként jön
+        /// vissza. A felbontás és a színtípus megmarad, tehát a kép tartalma nem sérül, de
+        /// byte-azonosságra nem szabad építeni.
+        /// </summary>
+        private async Task<int?> UploadImageAsync(int loadImageId, string name)
+        {
+            SetStatus($"⬆️ A(z) \"{name}\" kép átvitele a {cmbServerSave.SelectedItem} szerverre...", Color.RoyalBlue);
+
+            // 1. Letöltés a forrásról. Az image/load POST-ot vár, nem GET-et.
+            string loadUrl = $"{_baseLoadUrl}/image/load";
+            string loadBody = new JsonObject { ["id"] = loadImageId }.ToJsonString();
+            JsonObject? image;
+            try
+            {
+                OperationLog.Request("POST", loadUrl, loadBody);
+                using var content = new StringContent(loadBody, Encoding.UTF8, "application/json");
+                HttpResponseMessage response = await _httpClientLoad.PostAsync(loadUrl, content);
+                string body = await response.Content.ReadAsStringAsync();
+                OperationLog.Response((int)response.StatusCode, body);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    SetStatus($"❌ A kép letöltése sikertelen - {ApiErrorFormatter.Format(response.StatusCode, body)}", Color.Red);
+                    return null;
+                }
+                image = JsonNode.Parse(body) as JsonObject;
+            }
+            catch (Exception ex)
+            {
+                SetStatus($"❌ A kép letöltése sikertelen: {ex.Message}", Color.Red);
+                return null;
+            }
+
+            if (image == null || image["file"] == null)
+            {
+                SetStatus($"❌ A(z) \"{name}\" kép tartalma üres, a feltöltés kimarad.", Color.Red);
+                return null;
+            }
+
+            // 2. Az azonosítót el kell dobni, a jogosultsági csoportokat pedig lefordítani.
+            image.Remove("id");
+            image.Remove("imageUrl");
+            image.Remove("version");
+            ConvertGroupIds(image["groupIds"]);
+
+            // 3. Feltöltés a célra.
+            var result = await PostJsonAsync($"{_baseSaveUrl}/image/save", image.ToJsonString(), $"Kép feltöltése: {name}");
+            if (!result.Success)
+            {
+                SetStatus($"❌ A(z) \"{name}\" kép feltöltése sikertelen - {result.Error}", Color.Red);
+                return null;
+            }
+            if (!int.TryParse(result.Body.Trim(), out int newId) || newId <= 0)
+            {
+                SetStatus($"❌ A kép feltöltése nem érvényes azonosítót adott vissza: '{result.Body}'", Color.Red);
+                return null;
+            }
+
+            SetStatus($"✅ A(z) \"{name}\" kép átvitte (új ID={newId}).", Color.ForestGreen);
+            return newId;
+        }
+
+        /// <summary>
         /// A raszterfontot név + méret pár azonosítja. Nem dob kivételt, mint a menetrend-ági
         /// párja: itt egyetlen elem hibája miatt nem kell az egész műveletet eldobni.
         /// </summary>
@@ -714,8 +860,10 @@ namespace SmartpageTimetableDuplicateV1
                                                                         && rf.Size == rasterFontLoad.Size);
             if (rasterFontSave == null)
             {
-                SetStatus($"❌ Hiba: a Save szerveren nem található a {rasterFontLoad.TtFontName} (Size: {rasterFontLoad.Size}) raster font", Color.Red);
-                throw new Exception("No matching raster font on Save server");
+                // Nem dobunk kivételt a fordítás közepén: a hiányt összegyűjtjük, és a hívó egyben,
+                // érthetően jelenti. A fontok API-ból nem vihetők át, tehát ez blokkoló hiba.
+                _blockingProblems.Add($"'{rasterFontLoad.TtFontName}' {rasterFontLoad.Size}px raszterfont hiányzik a {cmbServerSave.SelectedItem} szerverről");
+                return;
             }
 
             // Az értékadás korábban egy "kv.Value is JsonObject" feltétel mögött állt - a mező
@@ -1095,6 +1243,7 @@ namespace SmartpageTimetableDuplicateV1
 
             _skipped.Clear();
             _conversions.Clear();
+            _blockingProblems.Clear();
             OperationLog.BeginOperation(
                 $"MENTÉS - {cmbLoadEntityType.SelectedItem} \"{txtSaveName.Text.Trim()}\"",
                 serverLoadKey, serverSaveKey, DryRun);
@@ -1173,6 +1322,11 @@ namespace SmartpageTimetableDuplicateV1
             string entityType = cmbLoadEntityType.SelectedItem?.ToString() ?? "Timetable";
             if (entityType == "Timetable")
             {
+                // A háttérkép átviteléhez a képlista kell mindkét oldalról.
+                if (!IsSameServer() && !await LoadCrossServerNameTablesAsync(includeLayoutTables: false))
+                {
+                    return;
+                }
                 await SaveTimetableEntityAsync(newName);
             }
             else if (entityType == "Layout")
@@ -1189,7 +1343,7 @@ namespace SmartpageTimetableDuplicateV1
                 // A képek, rácsok és menetrendek névtáblái csak akkor kellenek, ha eltérő
                 // szerverre másolunk - egy szerveren belül az eredeti ID a helyes. Az image/list
                 // több megabájt, ezért nem érdemes fölöslegesen letölteni.
-                if (!IsSameServer() && !await LoadCrossServerNameTablesAsync())
+                if (!IsSameServer() && !await LoadCrossServerNameTablesAsync(includeLayoutTables: true))
                 {
                     return;
                 }
@@ -1228,6 +1382,15 @@ namespace SmartpageTimetableDuplicateV1
                 if (node is JsonObject nodeObj)
                 {
                     nodeObj["name"] = newName;
+
+                    // A háttérkép átvitele: név szerint keressük a célon, és ha nincs meg,
+                    // feltöltjük. Ha ez sem megy, a mező kimarad - így legalább a menetrend
+                    // létrejön, csak háttérkép nélkül.
+                    if (!await TryConvertImageAsync(nodeObj, "imageId", "háttérkép"))
+                    {
+                        nodeObj.Remove("imageId");
+                        NoteSkipped("a háttérkép kimarad a menetrendből - kézzel pótolandó.");
+                    }
                 }
 
                 DisplayTxtJson(node);
@@ -1237,6 +1400,9 @@ namespace SmartpageTimetableDuplicateV1
                     WriteIndented = true,
                     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
                 }) ?? "{}";
+
+                // Van olyan hiány, amivel a mentés biztosan elbukna? Akkor ne is kezdjük el.
+                if (ReportBlockingProblems()) return;
 
                 // A fordítás lefutott, de még semmit nem írtunk: itt lehet megállítani.
                 if (!ConfirmCopy("Timetable", totalItems: 0, copiedItems: 0))
@@ -1270,35 +1436,43 @@ namespace SmartpageTimetableDuplicateV1
         /// Hamissal tér vissza, ha bármelyik lista nem érhető el: hiányos táblákkal fordítani
         /// rosszabb, mint el sem kezdeni.
         /// </summary>
-        private async Task<bool> LoadCrossServerNameTablesAsync()
+        private async Task<bool> LoadCrossServerNameTablesAsync(bool includeLayoutTables)
         {
-            var tables = new (string Endpoint, string Label, Action<List<NamedEntity>> SetLoad, Action<List<NamedEntity>> SetSave)[]
+            // A képlista mindkét entitástípushoz kell: a layout-elemek képeihez és a menetrend
+            // háttérképéhez egyaránt.
+            if (!await LoadNameTableAsync("image/list", "kép", l => _imagesLoad = l, l => _imagesSave = l))
+                return false;
+
+            if (!includeLayoutTables) return true;
+
+            return await LoadNameTableAsync("grid/list", "rács", l => _gridsLoad = l, l => _gridsSave = l)
+                && await LoadNameTableAsync("dynamic-timetable/list", "dinamikus menetrend",
+                       l => _timetablesLoad = l, l => _timetablesSave = l)
+                // A megálló-kötések átviteléhez:
+                && await LoadNameTableAsync("stop/list", "megálló", l => _stopsLoad = l, l => _stopsSave = l)
+                && await LoadNameTableAsync("state/list", "állapot", l => _statesLoad = l, l => _statesSave = l);
+        }
+
+        private async Task<bool> LoadNameTableAsync(string endpoint, string label,
+            Action<List<NamedEntity>> setLoad, Action<List<NamedEntity>> setSave)
+        {
+            var load = await LoadNamedListAsync(endpoint, true);
+            if (load == null)
             {
-                ("image/list", "kép", l => _imagesLoad = l, l => _imagesSave = l),
-                ("grid/list", "rács", l => _gridsLoad = l, l => _gridsSave = l),
-                ("dynamic-timetable/list", "dinamikus menetrend", l => _timetablesLoad = l, l => _timetablesSave = l),
-            };
-
-            foreach (var (endpoint, label, setLoad, setSave) in tables)
-            {
-                var load = await LoadNamedListAsync(endpoint, true);
-                if (load == null)
-                {
-                    SetStatus($"❌ Hiba: a(z) {label} lista betöltése sikertelen a Load szerverről - a másolás nem folytatható.", Color.Red);
-                    return false;
-                }
-                setLoad(load);
-
-                var save = await LoadNamedListAsync(endpoint, false);
-                if (save == null)
-                {
-                    SetStatus($"❌ Hiba: a(z) {label} lista betöltése sikertelen a Save szerverről - a másolás nem folytatható.", Color.Red);
-                    return false;
-                }
-                setSave(save);
-
-                SetStatus($"✅ Betöltve {load.Count} db {label} a Load, {save.Count} db a Save szerverről.", Color.ForestGreen);
+                SetStatus($"❌ Hiba: a(z) {label} lista betöltése sikertelen a Load szerverről - a másolás nem folytatható.", Color.Red);
+                return false;
             }
+            setLoad(load);
+
+            var save = await LoadNamedListAsync(endpoint, false);
+            if (save == null)
+            {
+                SetStatus($"❌ Hiba: a(z) {label} lista betöltése sikertelen a Save szerverről - a másolás nem folytatható.", Color.Red);
+                return false;
+            }
+            setSave(save);
+
+            SetStatus($"✅ Betöltve {load.Count} db {label} a Load, {save.Count} db a Save szerverről.", Color.ForestGreen);
             return true;
         }
 
@@ -1371,6 +1545,100 @@ namespace SmartpageTimetableDuplicateV1
         }
 
         /// <summary>
+        /// A megálló-kötések (slide-ok) átvitele. A slide köti a layoutot a megállóhoz - enélkül a
+        /// másolat sehol nem jelenik meg. Csak eltérő szerverek között fut: egy szerveren belüli
+        /// duplikálásnál nem szabad, mert két layout nem versenghet ugyanazon a megállón.
+        /// </summary>
+        private async Task CopySlidesAsync(int sourceLayoutId, int newLayoutId)
+        {
+            var sourceSlides = await LoadSlidesForLayoutAsync(sourceLayoutId);
+            if (sourceSlides == null)
+            {
+                NoteSkipped("a megálló-kötések nem olvashatók (slide/list) - a másolatot kézzel kell megállóhoz rendelni.");
+                return;
+            }
+            if (sourceSlides.Count == 0)
+            {
+                SetStatus("ℹ️ A forrás Layout nincs megállóhoz kötve, így nincs mit átvinni.", Color.DimGray);
+                return;
+            }
+
+            SetStatus($"📍 {sourceSlides.Count} megálló-kötés átvitele...", Color.Black);
+            int created = 0;
+
+            foreach (var slide in sourceSlides)
+            {
+                string stopName = ResolveName(_stopsLoad, slide["stopId"], "?");
+                string stateName = ResolveName(_statesLoad, slide["stateId"], "?");
+
+                var stop = _stopsSave.FirstOrDefault(s => NameEquals(s.Name, stopName));
+                if (stop == null)
+                {
+                    NoteSkipped($"a megálló-kötés kimarad: a Save szerveren nincs '{stopName}' nevű megálló.");
+                    continue;
+                }
+
+                var state = _statesSave.FirstOrDefault(s => NameEquals(s.Name, stateName));
+                if (state == null)
+                {
+                    NoteSkipped($"a megálló-kötés kimarad ({stopName}): a Save szerveren nincs '{stateName}' nevű állapot.");
+                    continue;
+                }
+
+                var payload = new JsonObject
+                {
+                    ["layoutId"] = newLayoutId,
+                    ["stopId"] = stop.Id,
+                    ["stateId"] = state.Id,
+                    ["prioritySn"] = slide["prioritySn"]?.GetValue<int?>() ?? 1,
+                    ["timer"] = slide["timer"]?.GetValue<int?>() ?? 0,
+                    ["informationSlide"] = slide["informationSlide"]?.GetValue<bool?>() ?? false,
+                    ["description"] = slide["description"]?.GetValue<string?>()
+                };
+
+                var result = await PostJsonAsync($"{_baseSaveUrl}/slide/save", payload.ToJsonString(),
+                    $"Megálló-kötés: {stopName} / {stateName}");
+                if (result.Success)
+                {
+                    created++;
+                }
+                else
+                {
+                    NoteSkipped($"a megálló-kötés mentése sikertelen ({stopName} / {stateName}) - {result.Error}");
+                }
+            }
+
+            if (created > 0)
+            {
+                SetStatus(DryRun
+                    ? $"🔍 [száraz futtatás] {created} megálló-kötés jönne létre."
+                    : $"✅ {created} megálló-kötés létrehozva - a másolat megjelenik ezeken a megállókon.", Color.ForestGreen);
+            }
+        }
+
+        /// <summary>
+        /// Egy layout megálló-kötései. A slide/list-nek nincs szűrt változata, ezért a teljes
+        /// listát kérjük le, és memóriában szűrünk - a mérés szerint ez néhány másodperc.
+        /// </summary>
+        private async Task<List<JsonObject>?> LoadSlidesForLayoutAsync(int layoutId)
+        {
+            return await LoadListAsync("slide/list", fromLoadServer: true, body =>
+            {
+                if (JsonNode.Parse(body) is not JsonArray root) return null;
+                return root.OfType<JsonObject>()
+                           .Where(o => o["layoutId"]?.GetValue<int?>() == layoutId)
+                           .Select(o => (JsonObject)o.DeepClone())
+                           .ToList();
+            });
+        }
+
+        private static string ResolveName(List<NamedEntity> table, JsonNode? idNode, string fallback)
+        {
+            if (idNode?.GetValue<int?>() is not int id) return fallback;
+            return table.FirstOrDefault(e => e.Id == id)?.Name ?? fallback;
+        }
+
+        /// <summary>
         /// A félbemaradt layout eltakarítása. A layout/remove kaszkádol az elemekre, tehát egyetlen
         /// hívás elég; külön elem-takarítás nem kell.
         /// </summary>
@@ -1378,21 +1646,28 @@ namespace SmartpageTimetableDuplicateV1
         {
             if (DryRun || layoutId <= 0) return;
 
-            string url = $"{_baseSaveUrl}/layout/remove?id={layoutId}";
             SetStatus($"↩️ Visszavonás: a hiányos Layout (ID={layoutId}) törlése...", Color.RoyalBlue);
             try
             {
-                OperationLog.Request("DELETE", url, null);
-                HttpResponseMessage response = await _httpClientSave.DeleteAsync(url);
-                string body = await response.Content.ReadAsStringAsync();
-                OperationLog.Response((int)response.StatusCode, body);
+                var (success, body, status) = await DeleteLayoutAsync(layoutId);
 
-                if (response.IsSuccessStatusCode)
+                // A layout/remove kaszkádol az elemekre, de a megálló-kötésekre NEM: ha a
+                // layouthoz slide tartozik, 422-vel elutasítja a törlést. Ilyenkor előbb a
+                // kötéseket kell elbontani.
+                if (!success && status == System.Net.HttpStatusCode.UnprocessableEntity)
+                {
+                    if (await RemoveSlidesOfLayoutAsync(layoutId))
+                    {
+                        (success, body, status) = await DeleteLayoutAsync(layoutId);
+                    }
+                }
+
+                if (success)
                 {
                     SetStatus($"↩️ A hiányos Layout (ID={layoutId}) törölve - a szerveren nem maradt félkész elem.", Color.RoyalBlue);
                     return;
                 }
-                SetStatus($"❌ A visszavonás nem sikerült - {ApiErrorFormatter.Format(response.StatusCode, body)}", Color.Red);
+                SetStatus($"❌ A visszavonás nem sikerült - {ApiErrorFormatter.Format(status, body)}", Color.Red);
                 SetStatus($"❗ A(z) {layoutId} azonosítójú Layoutot kézzel kell törölni a {cmbServerSave.SelectedItem} szerveren!", Color.Red);
             }
             catch (Exception ex)
@@ -1400,6 +1675,42 @@ namespace SmartpageTimetableDuplicateV1
                 SetStatus($"❌ A visszavonás nem sikerült: {ex.Message}", Color.Red);
                 SetStatus($"❗ A(z) {layoutId} azonosítójú Layoutot kézzel kell törölni a {cmbServerSave.SelectedItem} szerveren!", Color.Red);
             }
+        }
+
+        private async Task<(bool Success, string Body, System.Net.HttpStatusCode Status)> DeleteLayoutAsync(int layoutId)
+        {
+            string url = $"{_baseSaveUrl}/layout/remove?id={layoutId}";
+            OperationLog.Request("DELETE", url, null);
+            HttpResponseMessage response = await _httpClientSave.DeleteAsync(url);
+            string body = await response.Content.ReadAsStringAsync();
+            OperationLog.Response((int)response.StatusCode, body);
+            return (response.IsSuccessStatusCode, body, response.StatusCode);
+        }
+
+        /// <summary>A layouthoz tartozó megálló-kötések elbontása, hogy a layout törölhető legyen.</summary>
+        private async Task<bool> RemoveSlidesOfLayoutAsync(int layoutId)
+        {
+            var slides = await LoadListAsync("slide/list", fromLoadServer: false, body =>
+            {
+                if (JsonNode.Parse(body) is not JsonArray root) return null;
+                return root.OfType<JsonObject>()
+                           .Where(o => o["layoutId"]?.GetValue<int?>() == layoutId)
+                           .Select(o => o["id"]?.GetValue<int?>() ?? 0)
+                           .Where(id => id > 0)
+                           .ToList();
+            });
+            if (slides == null || slides.Count == 0) return false;
+
+            SetStatus($"↩️ {slides.Count} megálló-kötés elbontása a visszavonáshoz...", Color.RoyalBlue);
+            foreach (int slideId in slides)
+            {
+                string url = $"{_baseSaveUrl}/slide/remove?id={slideId}";
+                OperationLog.Request("DELETE", url, null);
+                HttpResponseMessage response = await _httpClientSave.DeleteAsync(url);
+                OperationLog.Response((int)response.StatusCode, await response.Content.ReadAsStringAsync());
+                if (!response.IsSuccessStatusCode) return false;
+            }
+            return true;
         }
 
         /// <summary>
@@ -1572,7 +1883,8 @@ namespace SmartpageTimetableDuplicateV1
                         // Név szerinti fordítás. Ezek a mezők korábban érintetlenül mentek át, így
                         // eltérő szerverre másolva vagy 422-t okoztak, vagy - ha az ID ott véletlenül
                         // létezett - némán egy másik képre/rácsra/menetrendre mutattak.
-                        itemIsValid &= TryConvertByName(itemObj, "imageId", _imagesLoad, _imagesSave, "kép", itemName);
+                        // A kép külön úton megy: ha a célon nincs meg, feltöltjük.
+                        itemIsValid &= await TryConvertImageAsync(itemObj, "imageId", itemName);
                         itemIsValid &= TryConvertByName(itemObj, "gridId", _gridsLoad, _gridsSave, "rács", itemName);
                         itemIsValid &= TryConvertByName(itemObj, "dynamicTimetableId", _timetablesLoad, _timetablesSave, "dinamikus menetrend", itemName);
 
@@ -1677,6 +1989,13 @@ namespace SmartpageTimetableDuplicateV1
                 else if (itemsResult.Success)
                 {
                     SetStatus($"✅ Layout elemek ({itemsArray.Count}db) sikeresen mentve a {cmbServerSave.SelectedItem} szerverre.", Color.ForestGreen);
+
+                    // A megálló-kötés csak szerverek között követi a másolatot; azonos szerveren
+                    // belüli duplikálásnál nem, mert két layout nem versenghet ugyanazon a megállón.
+                    if (!IsSameServer() && int.TryParse(txtLoadEntityId.Text.Trim(), out int sourceLayoutId))
+                    {
+                        await CopySlidesAsync(sourceLayoutId, layoutId);
+                    }
                 }
                 else
                 {

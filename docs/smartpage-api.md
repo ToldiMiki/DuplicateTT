@@ -58,7 +58,7 @@ Az alapminta entitásonként: `list` (lekérdezés), `load` (egy elem), `save` (
 | GET | `layout/list` | fejlécek, elemek nélkül |
 | GET | `layout/load/{id}` | path-paraméter, nem query |
 | POST | `layout/save` | `id` nélkül **létrehoz**, `id`-vel **frissít**; a válasz törzse az ID |
-| DELETE | `layout/remove?id={id}` | **kaszkádol** az elemekre és a slide-okra |
+| DELETE | `layout/remove?id={id}` | kaszkádol az elemekre, de a slide-okra **nem** |
 
 Kötelező mezők mentéskor: `name`, `displayId`.
 
@@ -100,8 +100,14 @@ Kötelező mezők: `width`, `height`. A `name` **nem** kötelező (de az egyedis
 | DELETE | `image/remove?id={id}` | |
 
 Kötelező mezők: `name`, `status`, `type`, és új rekordnál nem üres `file`.
-Mérés: egy `image/load`-dal letöltött kép `image/save`-vel új néven visszatöltve
-**byte-azonos** másolatot ad.
+
+> **A szerver újrakódolja a feltöltött képet.** Egy PROD-ról letöltött 4 bites
+> palettás PNG (647×550, 16 795 bájt) a PROD2-re feltöltve 8 bites palettás
+> PNG-ként (19 334 bájt) jött vissza. A felbontás és a színtípus változatlan, a
+> kép tartalma megmarad — csak a kódolás lesz pazarlóbb. Byte-azonosságra tehát
+> **nem szabad építeni**: ha a forrás már 8 bites, a másolat byte-azonos lesz, ha
+> 4 bites, akkor nem. Ellenőrzésnél a felbontást és a színtípust érdemes
+> összevetni, nem a fájl méretét.
 
 ### Announcement (közlemény)
 
@@ -120,16 +126,26 @@ A közlemény elemei az **`items`** tömbben érkeznek (nem `textAnnouncements` 
 
 | Metódus | Útvonal | Megjegyzés |
 |---|---|---|
-| GET | `slide/list` | **nincs szűrt változata**; a teljes lista lassú (percek) |
+| GET | `slide/list` | nincs szűrt változata; a teljes lista kb. 0,1 MB, néhány másodperc |
 | GET | `slide/load/{id}` | |
 | POST | `slide/save` | |
 | DELETE | `slide/remove?id={id}` | |
 
-Kötelező mezők: `stopId`, `layoutId`, `stateId`, `prioritySn` (**1 és 15 között**).
+Kötelező mezők: `stopId`, `layoutId`, `stateId`, `prioritySn` (**1 és 15 között**, a
+határokon kívüli érték 422). További mezők: `timer`, `informationSlide`, `description`.
+
+A `stateId` nem enum, hanem a **`state`** entitásra hivatkozik (`state/list`,
+`state/load/{id}`, `state/save`, `state/remove`) — nevesített feltételek, például „Minden nap,
+normál akku", „Minden nap, lemerült", „Karácsonyi ünnepkör". A PROD2-n 15 ilyen van.
+Szerverek közötti másolásnál ezt is név szerint kell fordítani.
 
 > Ez köti a layoutot a megállóhoz. A `layout/list` `stopNamesConcatenated` mezője ebből
 > **származtatott, csak olvasható** adat — átmásolni nem lehet, a kapcsolatot a slide tartja.
-> A PROD2-n 357 layoutból 294-nek van megálló-kötése.
+> A PROD2-n 357 layoutból 294-nek van megálló-kötése, összesen 455 slide.
+>
+> **Törlési sorrend:** amíg egy layouthoz slide tartozik, a `layout/remove` 422-vel elutasítja
+> a törlést („A kiválaszott elrendezés nem törölhető, mert hozzá van rendelve diához!").
+> Előbb a slide-okat kell elbontani `slide/remove?id=`-vel.
 
 ### Raster font
 
@@ -209,6 +225,7 @@ ellenőriznie őket.
 | A név egyedi legyen — layout, menetrend, közlemény | minden `save` |
 | Új kép és font létrehozásához nem üres fájl kötelező | `image/save`, `raster-font/save` |
 | A slide prioritása 1 és 15 közötti | `slide/save` |
+| Slide-dal rendelkező layout nem törölhető | `layout/remove` |
 
 ---
 
