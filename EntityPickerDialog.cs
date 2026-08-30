@@ -77,7 +77,7 @@ namespace SmartPageDuplicate
                 Location = new Point(12, ClientSize.Height - 46),
                 Size = new Size(300, 20),
                 Anchor = AnchorStyles.Bottom | AnchorStyles.Left,
-                ForeColor = Color.DimGray
+                ForeColor = Theme.Info
             };
 
             var ok = new Button

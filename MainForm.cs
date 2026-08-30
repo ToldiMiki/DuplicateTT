@@ -94,12 +94,12 @@ namespace SmartPageDuplicate
         {
             if (_blockingProblems.Count == 0) return false;
 
-            SetStatus("❌ A másolás nem indítható el, mert a cél szerverről hiányzik:", Color.Red);
+            SetStatus("❌ A másolás nem indítható el, mert a cél szerverről hiányzik:", Theme.Danger);
             foreach (string problem in _blockingProblems.Distinct())
             {
-                SetStatus($"      • {problem}", Color.Red);
+                SetStatus($"      • {problem}", Theme.Danger);
             }
-            SetStatus("   A raszterfontok az API-n keresztül nem vihetők át - előbb kézzel fel kell tölteni őket a cél szerverre.", Color.Red);
+            SetStatus("   A raszterfontok az API-n keresztül nem vihetők át - előbb kézzel fel kell tölteni őket a cél szerverre.", Theme.Danger);
 
             MessageBox.Show(this,
                 "A másolás nem folytatható, mert a cél szerverről hiányzik:\n\n"
@@ -178,9 +178,9 @@ namespace SmartPageDuplicate
             _saveUsername = null;
 
             if (OperationLog.Directory != null)
-                SetStatus($"📁 Napló: {OperationLog.Directory}", Color.DimGray);
+                SetStatus($"📁 Napló: {OperationLog.Directory}", Theme.Info);
             else
-                SetStatus($"⚠️ A naplózás nem indult el: {OperationLog.FailureReason}", Color.Orange);
+                SetStatus($"⚠️ A naplózás nem indult el: {OperationLog.FailureReason}", Theme.Warning);
         }
 
         // Száraz futtatás: minden lefut a szerverre íráson kívül. Ilyenkor a POST-ok nem mennek el,
@@ -214,7 +214,7 @@ namespace SmartPageDuplicate
             if (DryRun)
             {
                 OperationLog.SkippedRequest("POST", url, json);
-                SetStatus($"🔍 [száraz futtatás] {label}: a kérés NEM ment el, a küldendő JSON a naplóba került.", Color.RoyalBlue);
+                SetStatus($"🔍 [száraz futtatás] {label}: a kérés NEM ment el, a küldendő JSON a naplóba került.", Theme.DryRun);
                 return PostResult.Skipped();
             }
 
@@ -268,7 +268,7 @@ namespace SmartPageDuplicate
                         _loadSession = loginDialog.SessionId ?? "";
                         _loadUsername = loginDialog.Username ?? "";
                         txtLoadUsername.Text = _loadUsername;
-                        SetStatus($"✅ Bejelentkezés sikeres a {serverKey} (Load) szerverre.", Color.ForestGreen);
+                        SetStatus($"✅ Bejelentkezés sikeres a {serverKey} (Load) szerverre.", Theme.Success);
 
                         // Set headers and base URL for Load client
                         ApplyAuthHeaders(_httpClientLoad, _loadAuth, _loadSession);
@@ -280,7 +280,7 @@ namespace SmartPageDuplicate
                         // célszervert is, így a másolat a forrásra került vissza.
                         if (cmbServerSave.SelectedIndex != -1)
                         {
-                            SetStatus($"ℹ️ A Save szerver ({cmbServerSave.SelectedItem}) beállítása megmarad.", Color.DimGray);
+                            SetStatus($"ℹ️ A Save szerver ({cmbServerSave.SelectedItem}) beállítása megmarad.", Theme.Info);
                             return;
                         }
 
@@ -302,7 +302,7 @@ namespace SmartPageDuplicate
                         _saveApi = new SmartpageApiClient(_httpClientSave, _baseSaveUrl);
 
                         _isAutoCopyingCredentials = false;
-                        SetStatus($"✅ Bejelentkezési adatok automatikusan másolva a Save szerverre ({serverKey}).", Color.ForestGreen);
+                        SetStatus($"✅ Bejelentkezési adatok automatikusan másolva a Save szerverre ({serverKey}).", Theme.Success);
                     }
                     else if (combo == cmbServerSave)
                     {
@@ -310,7 +310,7 @@ namespace SmartPageDuplicate
                         _saveSession = loginDialog.SessionId ?? "";
                         _saveUsername = loginDialog.Username ?? "";
                         txtSaveUsername.Text = _saveUsername;
-                        SetStatus($"✅ Bejelentkezés sikeres a {serverKey} (Save) szerverre.", Color.ForestGreen);
+                        SetStatus($"✅ Bejelentkezés sikeres a {serverKey} (Save) szerverre.", Theme.Success);
 
                         // Set headers for Save client - biztonságos, mert _httpClientSave mindig
                         // önálló példány, sosem ugyanaz az objektum, mint _httpClientLoad.
@@ -322,7 +322,7 @@ namespace SmartPageDuplicate
                 else
                 {
                     combo.SelectedIndex = -1;
-                    SetStatus($"⚠️ Bejelentkezés visszavonva a {serverKey} szervernél.", Color.Orange);
+                    SetStatus($"⚠️ Bejelentkezés visszavonva a {serverKey} szervernél.", Theme.Warning);
                 }
             }
         }
@@ -340,7 +340,7 @@ namespace SmartPageDuplicate
                 txtSaveName.Text = "";
                 txtJson.Text = "";
                 txtStatus.Clear();
-                SetStatus("⚠️ Entity típus megváltozott --> előző elem törölve.", Color.Orange);
+                SetStatus("⚠️ Entity típus megváltozott --> előző elem törölve.", Theme.Warning);
             }
         }
         /// <summary>
@@ -375,7 +375,7 @@ namespace SmartPageDuplicate
             {
                 if (_skipped.Contains(message)) continue;
                 _skipped.Add(message);
-                SetStatus("⚠️ Figyelem: " + message, Color.Orange);
+                SetStatus("⚠️ Figyelem: " + message, Theme.Warning);
             }
             foreach (var kv in translator.Report.Conversions)
             {
@@ -407,7 +407,7 @@ namespace SmartPageDuplicate
                 case CopyTranslator.ImageLookupKind.NeedsUpload:
                     if (DryRun)
                     {
-                        SetStatus($"🔍 [száraz futtatás] a(z) \"{lookup.Name}\" kép feltöltésre kerülne a {cmbServerSave.SelectedItem} szerverre ({itemName}).", Color.RoyalBlue);
+                        SetStatus($"🔍 [száraz futtatás] a(z) \"{lookup.Name}\" kép feltöltésre kerülne a {cmbServerSave.SelectedItem} szerverre ({itemName}).", Theme.DryRun);
                         NoteConversion("feltöltendő kép");
                         return true;
                     }
@@ -459,14 +459,14 @@ namespace SmartPageDuplicate
             var api = fromLoadServer ? _loadApi : _saveApi;
             if (api == null)
             {
-                SetStatus($"❌ Hiba {endpoint}: nincs bejelentkezve a {(fromLoadServer ? "Load" : "Save")} szerverre.", Color.Red);
+                SetStatus($"❌ Hiba {endpoint}: nincs bejelentkezve a {(fromLoadServer ? "Load" : "Save")} szerverre.", Theme.Danger);
                 return null;
             }
 
             var result = await api.LoadListAsync(endpoint, customDeserializer);
             if (!result.Success)
             {
-                SetStatus($"❌ Hiba {endpoint}: {result.Error}", Color.Red);
+                SetStatus($"❌ Hiba {endpoint}: {result.Error}", Theme.Danger);
                 return null;
             }
             return result.Value;
@@ -480,7 +480,7 @@ namespace SmartPageDuplicate
                 var dict = list.ToDictionary(idSelector, item => labelSelector(item) ?? "");
                 setDict(dict);
                 string serverKey = fromLoadServer ? cmbServerLoad.SelectedItem?.ToString() ?? "DEV" : cmbServerSave.SelectedItem?.ToString() ?? "DEV";
-                SetStatus($"✅ Betöltve {list.Count}db {itemName} a {(fromLoadServer ? "Load" : "Save")} ({serverKey}) szerverről.", Color.ForestGreen);
+                SetStatus($"✅ Betöltve {list.Count}db {itemName} a {(fromLoadServer ? "Load" : "Save")} ({serverKey}) szerverről.", Theme.Success);
             }
         }
 
@@ -619,7 +619,7 @@ namespace SmartPageDuplicate
         private void NoteSkipped(string message)
         {
             _skipped.Add(message);
-            SetStatus("⚠️ Figyelem: " + message, Color.Orange);
+            SetStatus("⚠️ Figyelem: " + message, Theme.Warning);
         }
 
         /// <summary>
@@ -630,14 +630,14 @@ namespace SmartPageDuplicate
         {
             if (_skipped.Count == 0)
             {
-                SetStatus("✅ Összegzés: minden hivatkozás lefordítható volt, semmi nem maradt ki.", Color.ForestGreen);
+                SetStatus("✅ Összegzés: minden hivatkozás lefordítható volt, semmi nem maradt ki.", Theme.Success);
                 return;
             }
 
-            SetStatus($"⚠️ Összegzés: {_skipped.Count} dolog maradt ki a másolatból:", Color.DarkOrange);
+            SetStatus($"⚠️ Összegzés: {_skipped.Count} dolog maradt ki a másolatból:", Theme.Warning);
             foreach (var item in _skipped)
             {
-                SetStatus("      • " + item, Color.DarkOrange);
+                SetStatus("      • " + item, Theme.Warning);
             }
         }
 
@@ -650,7 +650,7 @@ namespace SmartPageDuplicate
         /// </summary>
         private async Task<int?> UploadImageAsync(CopyTranslator translator, int loadImageId, string name)
         {
-            SetStatus($"⬆️ A(z) \"{name}\" kép átvitele a {cmbServerSave.SelectedItem} szerverre...", Color.RoyalBlue);
+            SetStatus($"⬆️ A(z) \"{name}\" kép átvitele a {cmbServerSave.SelectedItem} szerverre...", Theme.DryRun);
 
             // 1. Letöltés a forrásról. Az image/load POST-ot vár, nem GET-et.
             string loadUrl = $"{_baseLoadUrl}/image/load";
@@ -666,20 +666,20 @@ namespace SmartPageDuplicate
 
                 if (!response.IsSuccessStatusCode)
                 {
-                    SetStatus($"❌ A kép letöltése sikertelen - {ApiErrorFormatter.Format(response.StatusCode, body)}", Color.Red);
+                    SetStatus($"❌ A kép letöltése sikertelen - {ApiErrorFormatter.Format(response.StatusCode, body)}", Theme.Danger);
                     return null;
                 }
                 image = JsonNode.Parse(body) as JsonObject;
             }
             catch (Exception ex)
             {
-                SetStatus($"❌ A kép letöltése sikertelen: {ex.Message}", Color.Red);
+                SetStatus($"❌ A kép letöltése sikertelen: {ex.Message}", Theme.Danger);
                 return null;
             }
 
             if (image == null || image["file"] == null)
             {
-                SetStatus($"❌ A(z) \"{name}\" kép tartalma üres, a feltöltés kimarad.", Color.Red);
+                SetStatus($"❌ A(z) \"{name}\" kép tartalma üres, a feltöltés kimarad.", Theme.Danger);
                 return null;
             }
 
@@ -693,16 +693,16 @@ namespace SmartPageDuplicate
             var result = await PostJsonAsync($"{_baseSaveUrl}/image/save", image.ToJsonString(), $"Kép feltöltése: {name}");
             if (!result.Success)
             {
-                SetStatus($"❌ A(z) \"{name}\" kép feltöltése sikertelen - {result.Error}", Color.Red);
+                SetStatus($"❌ A(z) \"{name}\" kép feltöltése sikertelen - {result.Error}", Theme.Danger);
                 return null;
             }
             if (!int.TryParse(result.Body.Trim(), out int newId) || newId <= 0)
             {
-                SetStatus($"❌ A kép feltöltése nem érvényes azonosítót adott vissza: '{result.Body}'", Color.Red);
+                SetStatus($"❌ A kép feltöltése nem érvényes azonosítót adott vissza: '{result.Body}'", Theme.Danger);
                 return null;
             }
 
-            SetStatus($"✅ A(z) \"{name}\" kép átvitte (új ID={newId}).", Color.ForestGreen);
+            SetStatus($"✅ A(z) \"{name}\" kép átvitte (új ID={newId}).", Theme.Success);
             return newId;
         }
 
@@ -715,7 +715,7 @@ namespace SmartPageDuplicate
         {
             if (_baseLoadUrl == null)
             {
-                SetStatus("❌ Hiba: előbb jelentkezz be a Load szerverre!", Color.Red);
+                SetStatus("❌ Hiba: előbb jelentkezz be a Load szerverre!", Theme.Danger);
                 return;
             }
 
@@ -725,11 +725,11 @@ namespace SmartPageDuplicate
             btnPickEntity.Enabled = false;
             try
             {
-                SetStatus($"{entityType} lista betöltése a {cmbServerLoad.SelectedItem} szerverről...", Color.Black);
+                SetStatus($"{entityType} lista betöltése a {cmbServerLoad.SelectedItem} szerverről...", Theme.Ink);
                 var rows = await LoadPickerRowsAsync(isLayout);
                 if (rows == null || rows.Count == 0)
                 {
-                    SetStatus($"❌ Hiba: a(z) {entityType} lista üres vagy nem érhető el.", Color.Red);
+                    SetStatus($"❌ Hiba: a(z) {entityType} lista üres vagy nem érhető el.", Theme.Danger);
                     return;
                 }
 
@@ -741,7 +741,7 @@ namespace SmartPageDuplicate
                 if (dialog.ShowDialog(this) == DialogResult.OK)
                 {
                     txtLoadEntityId.Text = dialog.SelectedId.ToString();
-                    SetStatus($"✅ Kiválasztva: ID={dialog.SelectedId} \"{dialog.SelectedName}\"", Color.ForestGreen);
+                    SetStatus($"✅ Kiválasztva: ID={dialog.SelectedId} \"{dialog.SelectedName}\"", Theme.Success);
                 }
             }
             finally
@@ -788,19 +788,19 @@ namespace SmartPageDuplicate
             var serverLoadSelected = cmbServerLoad.SelectedItem;
             if (serverLoadSelected == null)
             {
-                SetStatus($"❌ Hiba: nincs kiválasztva Load szerver!", Color.Red);
+                SetStatus($"❌ Hiba: nincs kiválasztva Load szerver!", Theme.Danger);
                 return;
             }
             if (_baseLoadUrl == null)
             {
-                SetStatus($"❌ Hiba: nincs bejelentkezve a Load szerverre!", Color.Red);
+                SetStatus($"❌ Hiba: nincs bejelentkezve a Load szerverre!", Theme.Danger);
                 return;
             }
 
             string id = txtLoadEntityId.Text.Trim();
             if (string.IsNullOrEmpty(id))
             {
-                SetStatus($"❌ Hiba: az ID mező üres!", Color.Red);
+                SetStatus($"❌ Hiba: az ID mező üres!", Theme.Danger);
                 return;
             }
 
@@ -819,14 +819,14 @@ namespace SmartPageDuplicate
             }
             else
             {
-                SetStatus($"❌ Hiba: az elemtípus nem értelmezhető.", Color.Red);
+                SetStatus($"❌ Hiba: az elemtípus nem értelmezhető.", Theme.Danger);
                 return;
             }
         }
 
         private async Task LoadTimetableEntityAsync(string id)
         {
-            SetStatus("Timetable beolvasása elkezdődött...", Color.Black);
+            SetStatus("Timetable beolvasása elkezdődött...", Theme.Ink);
             try
             {
                 /*                
@@ -835,7 +835,7 @@ namespace SmartPageDuplicate
                                 if (!briefResponse.IsSuccessStatusCode)
                                 {
                                     string err = await briefResponse.Content.ReadAsStringAsync();
-                                    SetStatus($"❌ Hiba load-brief: {briefResponse.StatusCode} - {err}", Color.Red);
+                                    SetStatus($"❌ Hiba load-brief: {briefResponse.StatusCode} - {err}", Theme.Danger);
                                     return;
                                 }
 
@@ -845,10 +845,10 @@ namespace SmartPageDuplicate
 
                                 if (briefItem == null)
                                 {
-                                    SetStatus($"❌ Hiba: a Timetable load-brief nem értelmezhető.", Color.Red);
+                                    SetStatus($"❌ Hiba: a Timetable load-brief nem értelmezhető.", Theme.Danger);
                                     return;
                                 }
-                                SetStatus($"✅ Timetable brief sikeresen beolvasva a {cmbServerLoad.SelectedItem} szerverről.", Color.ForestGreen);
+                                SetStatus($"✅ Timetable brief sikeresen beolvasva a {cmbServerLoad.SelectedItem} szerverről.", Theme.Success);
                 */
                 string fullUrl = $"{_baseLoadUrl}/dynamic-timetable/load?id={id}"; //included the brief information, fields
                 OperationLog.Request("GET", fullUrl, null);
@@ -857,7 +857,7 @@ namespace SmartPageDuplicate
                 {
                     string err = await fullResponse.Content.ReadAsStringAsync();
                     OperationLog.Response((int)fullResponse.StatusCode, err);
-                    SetStatus($"❌ A Timetable beolvasása sikertelen - {ApiErrorFormatter.Format(fullResponse.StatusCode, err)}", Color.Red);
+                    SetStatus($"❌ A Timetable beolvasása sikertelen - {ApiErrorFormatter.Format(fullResponse.StatusCode, err)}", Theme.Danger);
                     return;
                 }
 
@@ -870,7 +870,7 @@ namespace SmartPageDuplicate
 
                 if (fullItem == null)
                 {
-                    SetStatus($"❌ Hiba: a teljes elem nem értelmezhető.", Color.Red);
+                    SetStatus($"❌ Hiba: a teljes elem nem értelmezhető.", Theme.Danger);
                     return;
                 }
 
@@ -883,17 +883,17 @@ namespace SmartPageDuplicate
                 _loadedTimetableItem = fullItem;
                 txtSaveName.Text = fullItem.Name ?? "";
                 DisplayTxtJson(fullItem);
-                SetStatus($"✅ Timetable sikeresen beolvasva a {cmbServerLoad.SelectedItem} szerverről.", Color.ForestGreen);
+                SetStatus($"✅ Timetable sikeresen beolvasva a {cmbServerLoad.SelectedItem} szerverről.", Theme.Success);
             }
             catch (Exception ex)
             {
-                SetStatus($"❌ Hiba: {ex.Message}", Color.Red);
+                SetStatus($"❌ Hiba: {ex.Message}", Theme.Danger);
             }
         }
 
         private async Task LoadLayoutEntityAsync(string id)
         {
-            SetStatus("Layout beolvasása elkezdődött...", Color.Black);
+            SetStatus("Layout beolvasása elkezdődött...", Theme.Ink);
             try
             {
                 string briefUrl = $"{_baseLoadUrl}/layout/load/{id}";
@@ -903,7 +903,7 @@ namespace SmartPageDuplicate
                 {
                     string err = await briefResponse.Content.ReadAsStringAsync();
                     OperationLog.Response((int)briefResponse.StatusCode, err);
-                    SetStatus($"❌ A Layout fejléc beolvasása sikertelen - {ApiErrorFormatter.Format(briefResponse.StatusCode, err)}", Color.Red);
+                    SetStatus($"❌ A Layout fejléc beolvasása sikertelen - {ApiErrorFormatter.Format(briefResponse.StatusCode, err)}", Theme.Danger);
                     return;
                 }
 
@@ -913,7 +913,7 @@ namespace SmartPageDuplicate
                     briefJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                 if (briefItem == null)
                 {
-                    SetStatus($"❌ Hiba: a load-brief nem értelmezhető.", Color.Red);
+                    SetStatus($"❌ Hiba: a load-brief nem értelmezhető.", Theme.Danger);
                     return;
                 }
 
@@ -926,7 +926,7 @@ namespace SmartPageDuplicate
                 _loadedLayoutItem = briefItem;
                 txtSaveName.Text = briefItem.Name ?? "";
                 DisplayTxtJson(briefItem);
-                SetStatus($"✅ Layout brief sikeresen beolvasva a {cmbServerLoad.SelectedItem} szerverről.", Color.ForestGreen);
+                SetStatus($"✅ Layout brief sikeresen beolvasva a {cmbServerLoad.SelectedItem} szerverről.", Theme.Success);
 
                 string fullUrl = $"{_baseLoadUrl}/element/list/layoutId?layoutId={id}";
                 OperationLog.Request("GET", fullUrl, null);
@@ -935,7 +935,7 @@ namespace SmartPageDuplicate
                 {
                     string err = await fullResponse.Content.ReadAsStringAsync();
                     OperationLog.Response((int)fullResponse.StatusCode, err);
-                    SetStatus($"❌ A Layout elemeinek beolvasása sikertelen - {ApiErrorFormatter.Format(fullResponse.StatusCode, err)}", Color.Red);
+                    SetStatus($"❌ A Layout elemeinek beolvasása sikertelen - {ApiErrorFormatter.Format(fullResponse.StatusCode, err)}", Theme.Danger);
                     return;
                 }
 
@@ -945,7 +945,7 @@ namespace SmartPageDuplicate
                     fullJson, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
                 if (fullItem == null)
                 {
-                    SetStatus($"❌ Hiba: a teljes full-elem nem értelmezhető.", Color.Red);
+                    SetStatus($"❌ Hiba: a teljes full-elem nem értelmezhető.", Theme.Danger);
                     return;
                 }
 
@@ -959,11 +959,11 @@ namespace SmartPageDuplicate
 
                 _loadedLayoutItems = fullItem;
                 DisplayTxtJson(fullItem, true);
-                SetStatus($"✅ Layout összes eleme ({fullItem.Count}db) sikeresen beolvasva a {cmbServerLoad.SelectedItem} szerverről.", Color.ForestGreen);
+                SetStatus($"✅ Layout összes eleme ({fullItem.Count}db) sikeresen beolvasva a {cmbServerLoad.SelectedItem} szerverről.", Theme.Success);
             }
             catch (Exception ex)
             {
-                SetStatus($"❌ Hiba: {ex.Message}", Color.Red);
+                SetStatus($"❌ Hiba: {ex.Message}", Theme.Danger);
             }
         }
 
@@ -974,26 +974,26 @@ namespace SmartPageDuplicate
             var serverLoadSelected = cmbServerLoad.SelectedItem;
             if (serverLoadSelected == null)
             {
-                SetStatus($"❌ Hiba: nincs kiválasztva Load szerver!", Color.Red);
+                SetStatus($"❌ Hiba: nincs kiválasztva Load szerver!", Theme.Danger);
                 return;
             }
             string serverLoadKey = serverLoadSelected.ToString() ?? "DEV";
             if (_baseLoadUrl == null)
             {
-                SetStatus($"❌ Hiba: nincs bejelentkezve a Load szerverre!", Color.Red);
+                SetStatus($"❌ Hiba: nincs bejelentkezve a Load szerverre!", Theme.Danger);
                 return;
             }
 
             var serverSaveSelected = cmbServerSave.SelectedItem;
             if (serverSaveSelected == null)
             {
-                SetStatus($"❌ Hiba: nincs kiválasztva Save szerver!", Color.Red);
+                SetStatus($"❌ Hiba: nincs kiválasztva Save szerver!", Theme.Danger);
                 return;
             }
             string serverSaveKey = serverSaveSelected.ToString() ?? "DEV";
             if (_baseSaveUrl == null)
             {
-                SetStatus($"❌ Hiba: nincs bejelentkezve a Save szerverre!", Color.Red);
+                SetStatus($"❌ Hiba: nincs bejelentkezve a Save szerverre!", Theme.Danger);
                 return;
             }
 
@@ -1005,14 +1005,14 @@ namespace SmartPageDuplicate
                 serverLoadKey, serverSaveKey, DryRun);
             if (DryRun)
             {
-                SetStatus("🔍 Száraz futtatás: a fordítás lefut, de a szerverre semmi nem íródik.", Color.RoyalBlue);
+                SetStatus("🔍 Száraz futtatás: a fordítás lefut, de a szerverre semmi nem íródik.", Theme.DryRun);
             }
 
             // A gyors, olcsó ellenőrzések előre: ne a listák betöltése után derüljön ki, hogy
             // üres a név, vagy hogy a név már foglalt.
             if (string.IsNullOrEmpty(txtSaveName.Text.Trim()))
             {
-                SetStatus($"❌ Hiba: az új név üres!", Color.Red);
+                SetStatus($"❌ Hiba: az új név üres!", Theme.Danger);
                 return;
             }
             if (!await EnsureFreeNameAsync(cmbLoadEntityType.SelectedItem?.ToString() ?? "Timetable"))
@@ -1023,7 +1023,7 @@ namespace SmartPageDuplicate
             var displaysLoad = await LoadDisplaysList(true);  // load displays list from Load server
             if (displaysLoad == null)
             {
-                SetStatus($"❌ Hiba: displays lista betöltése sikertelen a {serverLoadKey} (Load) szervernél.", Color.Red);
+                SetStatus($"❌ Hiba: displays lista betöltése sikertelen a {serverLoadKey} (Load) szervernél.", Theme.Danger);
                 return;
             }
             _displaysLoad = displaysLoad;
@@ -1031,7 +1031,7 @@ namespace SmartPageDuplicate
             var displaysSave = await LoadDisplaysList(false);  // load displays list from Save server
             if (displaysSave == null)
             {
-                SetStatus($"❌ Hiba: displays lista betöltése sikertelen a {serverSaveKey} (Save) szervernél.", Color.Red);
+                SetStatus($"❌ Hiba: displays lista betöltése sikertelen a {serverSaveKey} (Save) szervernél.", Theme.Danger);
                 return;
             }
             _displaysSave = displaysSave;
@@ -1039,39 +1039,39 @@ namespace SmartPageDuplicate
             var rasterFontsLoad = await LoadFontsList(true);  // load fonts list from Load server
             if (rasterFontsLoad == null)
             {
-                SetStatus($"❌ Hiba: raster font lista betöltése sikertelen a {serverLoadKey} (Load) szervernél.", Color.Red);
+                SetStatus($"❌ Hiba: raster font lista betöltése sikertelen a {serverLoadKey} (Load) szervernél.", Theme.Danger);
                 return;
             }
-            SetStatus($"✅ Betöltve {rasterFontsLoad.Count}db raster font a Load ({serverLoadKey}) szerverről.", Color.ForestGreen);
+            SetStatus($"✅ Betöltve {rasterFontsLoad.Count}db raster font a Load ({serverLoadKey}) szerverről.", Theme.Success);
             _rasterFontsLoad = rasterFontsLoad;
 
             var rasterFontsSave = await LoadFontsList(false);  // load fonts list from Save server
             if (rasterFontsSave == null)
             {
-                SetStatus($"❌ Hiba: raster font lista betöltése sikertelen a {serverSaveKey} (Save) szervernél.", Color.Red);
+                SetStatus($"❌ Hiba: raster font lista betöltése sikertelen a {serverSaveKey} (Save) szervernél.", Theme.Danger);
                 return;
             }
-            SetStatus($"✅ Betöltve {rasterFontsSave.Count}db raster font a Save ({serverSaveKey}) szerverről.", Color.ForestGreen);
+            SetStatus($"✅ Betöltve {rasterFontsSave.Count}db raster font a Save ({serverSaveKey}) szerverről.", Theme.Success);
             _rasterFontsSave = rasterFontsSave;
 
             var groupsLoad = await LoadGroupsList(true);  // load groups list from Load server
             if (groupsLoad != null)
             {
                 _groupsLoad = groupsLoad;
-                SetStatus($"✅ Betöltve {groupsLoad.Count}db csoport a Load ({serverLoadKey}) szerverről: {string.Join(", ", groupsLoad.Select(g => g.Name))}", Color.ForestGreen);
+                SetStatus($"✅ Betöltve {groupsLoad.Count}db csoport a Load ({serverLoadKey}) szerverről: {string.Join(", ", groupsLoad.Select(g => g.Name))}", Theme.Success);
             }
 
             var groupsSave = await LoadGroupsList(false);  // load groups list from Save server
             if (groupsSave != null)
             {
                 _groupsSave = groupsSave;
-                SetStatus($"✅ Betöltve {groupsSave.Count}db csoport a Save ({serverSaveKey}) szerverről: {string.Join(", ", groupsSave.Select(g => g.Name))}", Color.ForestGreen);
+                SetStatus($"✅ Betöltve {groupsSave.Count}db csoport a Save ({serverSaveKey}) szerverről: {string.Join(", ", groupsSave.Select(g => g.Name))}", Theme.Success);
             }
 
             string newName = txtSaveName.Text.Trim();
             if (string.IsNullOrEmpty(newName))
             {
-                SetStatus($"❌ Hiba: az új név üres!", Color.Red);
+                SetStatus($"❌ Hiba: az új név üres!", Theme.Danger);
                 return;
             }
 
@@ -1108,7 +1108,7 @@ namespace SmartPageDuplicate
             }
             else
             {
-                SetStatus($"❌ Hiba: a kiválasztott elemtípus nem értelmezhető.", Color.Red);
+                SetStatus($"❌ Hiba: a kiválasztott elemtípus nem értelmezhető.", Theme.Danger);
                 return;
             }
 
@@ -1117,11 +1117,11 @@ namespace SmartPageDuplicate
 
         private async Task SaveTimetableEntityAsync(string newName)
         {
-            SetStatus("Timetable mentése elkezdődött...", Color.Black);
+            SetStatus("Timetable mentése elkezdődött...", Theme.Ink);
 
             if (_loadedTimetableItem == null)
             {
-                SetStatus($"❌ Hiba: nincs beolvasott Timetable elem!", Color.Red);
+                SetStatus($"❌ Hiba: nincs beolvasott Timetable elem!", Theme.Danger);
                 return;
             }
 
@@ -1166,27 +1166,27 @@ namespace SmartPageDuplicate
                 // A fordítás lefutott, de még semmit nem írtunk: itt lehet megállítani.
                 if (!ConfirmCopy("Timetable", totalItems: 0, copiedItems: 0))
                 {
-                    SetStatus("⛔ A mentés megszakadt a felhasználó kérésére - a szerveren semmi nem változott.", Color.Red);
+                    SetStatus("⛔ A mentés megszakadt a felhasználó kérésére - a szerveren semmi nem változott.", Theme.Danger);
                     return;
                 }
 
                 var result = await PostJsonAsync($"{_baseSaveUrl}/dynamic-timetable/save", jsonOut, "Timetable mentése");
                 if (result.WasSkipped)
                 {
-                    SetStatus("🔍 Száraz futtatás vége - a szerveren semmi nem változott.", Color.RoyalBlue);
+                    SetStatus("🔍 Száraz futtatás vége - a szerveren semmi nem változott.", Theme.DryRun);
                 }
                 else if (result.Success)
                 {
-                    SetStatus($"✅ Sikeres mentés a {cmbServerSave.SelectedItem} szerverre.", Color.ForestGreen);
+                    SetStatus($"✅ Sikeres mentés a {cmbServerSave.SelectedItem} szerverre.", Theme.Success);
                 }
                 else
                 {
-                    SetStatus($"❌ Hiba - {result.Error}", Color.Red);
+                    SetStatus($"❌ Hiba - {result.Error}", Theme.Danger);
                 }
             }
             catch (Exception ex)
             {
-                SetStatus($"❌ Hiba: {ex.Message}", Color.Red);
+                SetStatus($"❌ Hiba: {ex.Message}", Theme.Danger);
             }
         }
 
@@ -1218,7 +1218,7 @@ namespace SmartPageDuplicate
             var load = await LoadNamedListAsync(endpoint, true);
             if (load == null)
             {
-                SetStatus($"❌ Hiba: a(z) {label} lista betöltése sikertelen a Load szerverről - a másolás nem folytatható.", Color.Red);
+                SetStatus($"❌ Hiba: a(z) {label} lista betöltése sikertelen a Load szerverről - a másolás nem folytatható.", Theme.Danger);
                 return false;
             }
             setLoad(load);
@@ -1226,12 +1226,12 @@ namespace SmartPageDuplicate
             var save = await LoadNamedListAsync(endpoint, false);
             if (save == null)
             {
-                SetStatus($"❌ Hiba: a(z) {label} lista betöltése sikertelen a Save szerverről - a másolás nem folytatható.", Color.Red);
+                SetStatus($"❌ Hiba: a(z) {label} lista betöltése sikertelen a Save szerverről - a másolás nem folytatható.", Theme.Danger);
                 return false;
             }
             setSave(save);
 
-            SetStatus($"✅ Betöltve {load.Count} db {label} a Load, {save.Count} db a Save szerverről.", Color.ForestGreen);
+            SetStatus($"✅ Betöltve {load.Count} db {label} a Load, {save.Count} db a Save szerverről.", Theme.Success);
             return true;
         }
 
@@ -1247,7 +1247,7 @@ namespace SmartPageDuplicate
             var existing = await LoadNamedListAsync(endpoint, fromLoadServer: false);
             if (existing == null)
             {
-                SetStatus("⚠️ A névütközés nem ellenőrizhető (a lista nem érhető el) - a mentés folytatódik.", Color.Orange);
+                SetStatus("⚠️ A névütközés nem ellenőrizhető (a lista nem érhető el) - a mentés folytatódik.", Theme.Warning);
                 return true;
             }
 
@@ -1269,17 +1269,17 @@ namespace SmartPageDuplicate
 
             if (answer == DialogResult.Cancel)
             {
-                SetStatus("⛔ A mentés megszakadt: a név már foglalt a cél szerveren.", Color.Red);
+                SetStatus("⛔ A mentés megszakadt: a név már foglalt a cél szerveren.", Theme.Danger);
                 return false;
             }
             if (answer == DialogResult.Yes)
             {
                 txtSaveName.Text = suggestion;
-                SetStatus($"✏️ Az új név: \"{suggestion}\"", Color.RoyalBlue);
+                SetStatus($"✏️ Az új név: \"{suggestion}\"", Theme.DryRun);
             }
             else
             {
-                SetStatus($"⚠️ A név marad \"{name}\" - a szerver ezt várhatóan elutasítja.", Color.Orange);
+                SetStatus($"⚠️ A név marad \"{name}\" - a szerver ezt várhatóan elutasítja.", Theme.Warning);
             }
             return true;
         }
@@ -1318,11 +1318,11 @@ namespace SmartPageDuplicate
             }
             if (sourceSlides.Count == 0)
             {
-                SetStatus("ℹ️ A forrás Layout nincs megállóhoz kötve, így nincs mit átvinni.", Color.DimGray);
+                SetStatus("ℹ️ A forrás Layout nincs megállóhoz kötve, így nincs mit átvinni.", Theme.Info);
                 return;
             }
 
-            SetStatus($"📍 {sourceSlides.Count} megálló-kötés átvitele...", Color.Black);
+            SetStatus($"📍 {sourceSlides.Count} megálló-kötés átvitele...", Theme.Ink);
             int created = 0;
 
             var translator = NewTranslator();
@@ -1352,7 +1352,7 @@ namespace SmartPageDuplicate
             {
                 SetStatus(DryRun
                     ? $"🔍 [száraz futtatás] {created} megálló-kötés jönne létre."
-                    : $"✅ {created} megálló-kötés létrehozva - a másolat megjelenik ezeken a megállókon.", Color.ForestGreen);
+                    : $"✅ {created} megálló-kötés létrehozva - a másolat megjelenik ezeken a megállókon.", Theme.Success);
             }
         }
 
@@ -1380,7 +1380,7 @@ namespace SmartPageDuplicate
         {
             if (DryRun || layoutId <= 0) return;
 
-            SetStatus($"↩️ Visszavonás: a hiányos Layout (ID={layoutId}) törlése...", Color.RoyalBlue);
+            SetStatus($"↩️ Visszavonás: a hiányos Layout (ID={layoutId}) törlése...", Theme.DryRun);
             try
             {
                 var (success, body, status) = await DeleteLayoutAsync(layoutId);
@@ -1398,16 +1398,16 @@ namespace SmartPageDuplicate
 
                 if (success)
                 {
-                    SetStatus($"↩️ A hiányos Layout (ID={layoutId}) törölve - a szerveren nem maradt félkész elem.", Color.RoyalBlue);
+                    SetStatus($"↩️ A hiányos Layout (ID={layoutId}) törölve - a szerveren nem maradt félkész elem.", Theme.DryRun);
                     return;
                 }
-                SetStatus($"❌ A visszavonás nem sikerült - {ApiErrorFormatter.Format(status, body)}", Color.Red);
-                SetStatus($"❗ A(z) {layoutId} azonosítójú Layoutot kézzel kell törölni a {cmbServerSave.SelectedItem} szerveren!", Color.Red);
+                SetStatus($"❌ A visszavonás nem sikerült - {ApiErrorFormatter.Format(status, body)}", Theme.Danger);
+                SetStatus($"❗ A(z) {layoutId} azonosítójú Layoutot kézzel kell törölni a {cmbServerSave.SelectedItem} szerveren!", Theme.Danger);
             }
             catch (Exception ex)
             {
-                SetStatus($"❌ A visszavonás nem sikerült: {ex.Message}", Color.Red);
-                SetStatus($"❗ A(z) {layoutId} azonosítójú Layoutot kézzel kell törölni a {cmbServerSave.SelectedItem} szerveren!", Color.Red);
+                SetStatus($"❌ A visszavonás nem sikerült: {ex.Message}", Theme.Danger);
+                SetStatus($"❗ A(z) {layoutId} azonosítójú Layoutot kézzel kell törölni a {cmbServerSave.SelectedItem} szerveren!", Theme.Danger);
             }
         }
 
@@ -1435,7 +1435,7 @@ namespace SmartPageDuplicate
             });
             if (slides == null || slides.Count == 0) return false;
 
-            SetStatus($"↩️ {slides.Count} megálló-kötés elbontása a visszavonáshoz...", Color.RoyalBlue);
+            SetStatus($"↩️ {slides.Count} megálló-kötés elbontása a visszavonáshoz...", Theme.DryRun);
             foreach (int slideId in slides)
             {
                 string url = $"{_baseSaveUrl}/slide/remove?id={slideId}";
@@ -1540,16 +1540,16 @@ namespace SmartPageDuplicate
             if (allowed) return;
 
             SetStatus($"⚠️ Figyelem: az első elem típusa '{label}'. A szerver megköveteli, hogy az első elem "
-                    + "kép vagy közleményhely legyen - a mentés emiatt elutasításra kerülhet.", Color.DarkOrange);
+                    + "kép vagy közleményhely legyen - a mentés emiatt elutasításra kerülhet.", Theme.Warning);
         }
 
         private async Task SaveLayoutEntityAsync(string newName)
         {
-            SetStatus("Layout mentése elkezdődött...", Color.Black);
+            SetStatus("Layout mentése elkezdődött...", Theme.Ink);
 
             if (_loadedLayoutItem == null)
             {
-                SetStatus($"❌ Hiba: nincs beolvasott Layout elem!", Color.Red);
+                SetStatus($"❌ Hiba: nincs beolvasott Layout elem!", Theme.Danger);
                 return;
             }
 
@@ -1629,7 +1629,7 @@ namespace SmartPageDuplicate
                     }
                     else
                     {
-                        SetStatus($"❌ Elem kihagyva a másolásból: {originLayoutItem.Name} - {originLayoutItem.ElementTypeLabel}", Color.Red);
+                        SetStatus($"❌ Elem kihagyva a másolásból: {originLayoutItem.Name} - {originLayoutItem.ElementTypeLabel}", Theme.Danger);
                     }
                 }
 
@@ -1641,7 +1641,7 @@ namespace SmartPageDuplicate
                 // Itt még semmit nem írtunk a szerverre: ez az utolsó pont, ahol meg lehet állni.
                 if (!ConfirmCopy("Layout", _loadedLayoutItems?.Count ?? 0, itemsArray.Count))
                 {
-                    SetStatus("⛔ A mentés megszakadt a felhasználó kérésére - a szerveren semmi nem változott.", Color.Red);
+                    SetStatus("⛔ A mentés megszakadt a felhasználó kérésére - a szerveren semmi nem változott.", Theme.Danger);
                     return;
                 }
 
@@ -1652,7 +1652,7 @@ namespace SmartPageDuplicate
                 var briefResult = await PostJsonAsync($"{_baseSaveUrl}/layout/save", jsonOut, "Layout fejléc mentése");
                 if (!briefResult.Success)
                 {
-                    SetStatus($"❌ A Layout fejléc mentése sikertelen - {briefResult.Error}", Color.Red);
+                    SetStatus($"❌ A Layout fejléc mentése sikertelen - {briefResult.Error}", Theme.Danger);
                     return;
                 }
 
@@ -1662,26 +1662,26 @@ namespace SmartPageDuplicate
                     // Száraz futtatásnál nincs valódi ID. A helykitöltő csak azért kell, hogy az
                     // elemek JSON-ja is összeálljon, és a fordítás eredménye ellenőrizhető legyen.
                     layoutId = 0;
-                    SetStatus("🔍 [száraz futtatás] a Layout fejléc nem jött létre; az elemek layoutId mezője helykitöltő 0.", Color.RoyalBlue);
+                    SetStatus("🔍 [száraz futtatás] a Layout fejléc nem jött létre; az elemek layoutId mezője helykitöltő 0.", Theme.DryRun);
                 }
                 else
                 {
-                    SetStatus($"✅ Sikeres brief mentés a {cmbServerSave.SelectedItem} szerverre.", Color.ForestGreen);
+                    SetStatus($"✅ Sikeres brief mentés a {cmbServerSave.SelectedItem} szerverre.", Theme.Success);
 
                     //response body contains the saved layout's ID
                     if (!int.TryParse(briefResult.Body.Trim(), out layoutId) || layoutId <= 0)
                     {
                         // A korábbi 10000-es küszöb a PROD2 ID-tartományának véletlene volt, nem
                         // az API szerződése; egy friss telepítésen hamis hibát jelzett volna.
-                        SetStatus($"❌ Hiba: a fejléc mentése nem érvényes ID-t adott vissza: '{briefResult.Body}'", Color.Red);
+                        SetStatus($"❌ Hiba: a fejléc mentése nem érvényes ID-t adott vissza: '{briefResult.Body}'", Theme.Danger);
                         return;
                     }
-                    SetStatus($"✅ Az új Layout ID-ja: {layoutId}", Color.ForestGreen);
+                    SetStatus($"✅ Az új Layout ID-ja: {layoutId}", Theme.Success);
                 }
 
                 if (itemsArray.Count == 0)
                 {
-                    SetStatus("Nincs mentendő Layout elem (csak brief fejléc), ezért a mentési folyamat befejezve.", Color.ForestGreen);
+                    SetStatus("Nincs mentendő Layout elem (csak brief fejléc), ezért a mentési folyamat befejezve.", Theme.Success);
                     return;
                 }
 
@@ -1703,11 +1703,11 @@ namespace SmartPageDuplicate
 
                 if (itemsResult.WasSkipped)
                 {
-                    SetStatus("🔍 Száraz futtatás vége - a szerveren semmi nem változott.", Color.RoyalBlue);
+                    SetStatus("🔍 Száraz futtatás vége - a szerveren semmi nem változott.", Theme.DryRun);
                 }
                 else if (itemsResult.Success)
                 {
-                    SetStatus($"✅ Layout elemek ({itemsArray.Count}db) sikeresen mentve a {cmbServerSave.SelectedItem} szerverre.", Color.ForestGreen);
+                    SetStatus($"✅ Layout elemek ({itemsArray.Count}db) sikeresen mentve a {cmbServerSave.SelectedItem} szerverre.", Theme.Success);
 
                     // A megálló-kötés csak szerverek között követi a másolatot; azonos szerveren
                     // belüli duplikálásnál nem, mert két layout nem versenghet ugyanazon a megállón.
@@ -1718,7 +1718,7 @@ namespace SmartPageDuplicate
                 }
                 else
                 {
-                    SetStatus($"❌ A Layout elemek mentése sikertelen - {itemsResult.Error}", Color.Red);
+                    SetStatus($"❌ A Layout elemek mentése sikertelen - {itemsResult.Error}", Theme.Danger);
                     // A fejléc már létrejött, de elemek nélkül használhatatlan: takarítsuk el,
                     // különben árva layout marad a szerveren.
                     await RollbackLayoutAsync(layoutId);
@@ -1726,7 +1726,7 @@ namespace SmartPageDuplicate
             }
             catch (Exception ex)
             {
-                SetStatus($"❌ Hiba: {ex.Message}", Color.Red);
+                SetStatus($"❌ Hiba: {ex.Message}", Theme.Danger);
             }
         }
 
@@ -1753,13 +1753,13 @@ namespace SmartPageDuplicate
 
             if (unknown.Count == 0) return true;
 
-            SetStatus($"⚠️ Figyelem: a szerver {unknown.Count} olyan mezőt küldött a(z) {what} elemben, amit ez a program nem ismer - ezek a másolatból KIMARADNAK:", Color.DarkOrange);
+            SetStatus($"⚠️ Figyelem: a szerver {unknown.Count} olyan mezőt küldött a(z) {what} elemben, amit ez a program nem ismer - ezek a másolatból KIMARADNAK:", Theme.Warning);
             foreach (var field in unknown)
             {
-                SetStatus($"      • {field}", Color.DarkOrange);
+                SetStatus($"      • {field}", Theme.Warning);
                 _unknownFields.Add($"{what}: {field}");
             }
-            SetStatus("      (a program frissítésre szorul - a mezőket fel kell venni a modellbe)", Color.DarkOrange);
+            SetStatus("      (a program frissítésre szorul - a mezőket fel kell venni a modellbe)", Theme.Warning);
 
             var answer = MessageBox.Show(this,
                 $"A szerver {unknown.Count} olyan mezőt küldött a(z) {what} elemben, amit ez a program nem ismer:\n\n"
@@ -1788,7 +1788,7 @@ namespace SmartPageDuplicate
             _unknownFields.Clear();
             txtSaveName.Text = "";
             txtJson.Text = "";
-            SetStatus("⛔ " + reason, Color.Red);
+            SetStatus("⛔ " + reason, Theme.Danger);
         }
 
         /// <summary>Hosszú listát nem érdemes egy üzenetablakba zsúfolni.</summary>

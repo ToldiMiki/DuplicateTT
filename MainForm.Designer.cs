@@ -1,3 +1,4 @@
+using System;
 using System.Drawing;
 using System.Windows.Forms;
 
@@ -26,15 +27,17 @@ namespace SmartPageDuplicate
         private const int RowH = 30;
         private const int CtrlH = 25;
 
-        // --- Színek: visszafogott, egyetlen hangsúllyal ---
-        private static readonly Color Ink = Color.FromArgb(28, 32, 38);
-        private static readonly Color InkSoft = Color.FromArgb(96, 104, 114);
-        private static readonly Color Ground = Color.FromArgb(246, 247, 249);
-        private static readonly Color Surface = Color.White;
-        private static readonly Color Rule = Color.FromArgb(214, 220, 227);
-        private static readonly Color AccentSrc = Color.FromArgb(38, 92, 150);   // forrás: hideg
-        private static readonly Color AccentDst = Color.FromArgb(150, 96, 20);   // cél: meleg
-        private static readonly Color DangerTint = Color.FromArgb(62, 72, 132);
+        // --- Színek: a HC Linear arculatból (lásd Theme.cs) ---
+        // A webes felületen a gombok petróleumkékek, és hoverre mentára váltanak; itt ez a két
+        // szín különbözteti meg a forrást (olvasás) a céltól (írás).
+        private static readonly Color Ink = Theme.Ink;
+        private static readonly Color InkSoft = Theme.InkSoft;
+        private static readonly Color Ground = Theme.Ground;
+        private static readonly Color Surface = Theme.Surface;
+        private static readonly Color Rule = Theme.Rule;
+        private static readonly Color AccentSrc = Theme.Brand;    // forrás: mély petróleum
+        private static readonly Color AccentDst = Theme.Accent;   // cél: élénk menta
+        private static readonly Color DangerTint = Theme.DryRun;
 
         private static Font UiFont(float size = 9F, FontStyle style = FontStyle.Regular)
             => new Font("Segoe UI", size, style);
@@ -58,6 +61,7 @@ namespace SmartPageDuplicate
             BuildHeader();
             BuildSourcePanel();
             BuildTargetPanel();
+            AlignPanels();
             BuildOutputArea();
 
             this.ResumeLayout(false);
@@ -68,25 +72,27 @@ namespace SmartPageDuplicate
 
         private void BuildHeader()
         {
+            // A fejléc a márka vezérszínét viseli, ahogy a webes felület is.
             pnlHeader = new Panel
             {
                 Location = new Point(0, 0),
                 Size = new Size(this.ClientSize.Width, HeaderH),
-                BackColor = Surface,
+                BackColor = Theme.Brand,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right
             };
-            // Finom elválasztó a fejléc alján - keret helyett, hogy ne legyen dobozos.
+            // Menta csík a fejléc alján - a márka második színe, a háttérkép átmenetét idézve.
             pnlHeader.Paint += (s, e) =>
             {
-                using var pen = new Pen(Rule);
-                e.Graphics.DrawLine(pen, 0, pnlHeader.Height - 1, pnlHeader.Width, pnlHeader.Height - 1);
+                using var brush = new SolidBrush(Theme.Accent);
+                e.Graphics.FillRectangle(brush, 0, pnlHeader.Height - 3, pnlHeader.Width, 3);
             };
 
             lblAppName = new Label
             {
                 Text = "SmartPage Duplicate",
                 Font = UiFont(14F, FontStyle.Regular),
-                ForeColor = Ink,
+                ForeColor = Color.White,
+                BackColor = Color.Transparent,
                 // A magasságnak bőven a betűméret fölött kell lennie: 125%-os kijelzőskálázáson
                 // a szoros keret levágja a lelógó szárakat.
                 Location = new Point(Margin_, 8),
@@ -98,7 +104,9 @@ namespace SmartPageDuplicate
             {
                 Text = "Menetrend és elrendezés másolása Smartpage szerverek között",
                 Font = UiFont(8.5F),
-                ForeColor = InkSoft,
+                // A fehér 70%-os keveréke a márkaszínnel: olvasható, de nem versenyez a címmel.
+                ForeColor = Color.FromArgb(178, 205, 216),
+                BackColor = Color.Transparent,
                 Location = new Point(Margin_ + 2, 40),
                 Size = new Size(520, 18)
             };
@@ -106,7 +114,8 @@ namespace SmartPageDuplicate
             lblVersion = new Label
             {
                 Font = UiFont(8.5F),
-                ForeColor = InkSoft,
+                ForeColor = Theme.Accent,
+                BackColor = Color.Transparent,
                 Size = new Size(120, 18),
                 TextAlign = ContentAlignment.MiddleRight,
                 Anchor = AnchorStyles.Top | AnchorStyles.Right
@@ -222,6 +231,21 @@ namespace SmartPageDuplicate
             this.Controls.Add(grpTarget);
         }
 
+        /// <summary>
+        /// A két panel eltérő számú sort tartalmaz, ezért magától nem egyforma magas, és a két
+        /// főgomb sem kerülne egy vonalba. Az igazítás a nagyobbikhoz történik.
+        /// </summary>
+        private void AlignPanels()
+        {
+            int buttonTop = Math.Max(btnLoad.Top, btnSave.Top);
+            btnLoad.Top = buttonTop;
+            btnSave.Top = buttonTop;
+
+            int panelHeight = Math.Max(grpSource.Height, grpTarget.Height);
+            grpSource.Height = panelHeight;
+            grpTarget.Height = panelHeight;
+        }
+
         // ------------------------------------------------------------------ kimenet
 
         private void BuildOutputArea()
@@ -278,7 +302,9 @@ namespace SmartPageDuplicate
                 Location = new Point(x, y),
                 Size = new Size(PanelW, 200),
                 Font = UiFont(9.5F, FontStyle.Bold),
-                ForeColor = accent,
+                // A cím mindig a sötét márkaszín: a menta fehér alapon nem volna olvasható.
+                // A megkülönböztetést a felső sáv színe végzi.
+                ForeColor = Theme.Brand,
                 BackColor = Surface,
                 Padding = new Padding(12, 6, 12, 12)
             };
@@ -330,6 +356,9 @@ namespace SmartPageDuplicate
 
         private Button MakePrimaryButton(string text, int y, Color accent)
         {
+            // A menta akcentuson a fehér felirat olvashatatlan; a világos háttér sötét szöveget kap.
+            bool lightBackground = (accent.R * 0.299 + accent.G * 0.587 + accent.B * 0.114) > 150;
+
             var button = new Button
             {
                 Text = text,
@@ -338,7 +367,7 @@ namespace SmartPageDuplicate
                 Font = UiFont(10F, FontStyle.Bold),
                 FlatStyle = FlatStyle.Flat,
                 BackColor = accent,
-                ForeColor = Color.White,
+                ForeColor = lightBackground ? Theme.Brand : Color.White,
                 Cursor = Cursors.Hand
             };
             button.FlatAppearance.BorderSize = 0;
