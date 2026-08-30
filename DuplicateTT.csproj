@@ -1,5 +1,12 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
+  <ItemGroup>
+    <!-- A teszt-projekt ezen a mappán belül van; enélkül a fő projekt is megpróbálná
+         lefordítani a teszteket (az SDK alapból minden .cs fájlt bevesz). -->
+    <Compile Remove="DuplicateTT.Tests\**" />
+    <None Remove="DuplicateTT.Tests\**" />
+  </ItemGroup>
+
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>

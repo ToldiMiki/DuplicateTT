@@ -13,7 +13,11 @@
 
 | Fájl | Szerep |
 |---|---|
-| `MainForm.cs` | UI + HTTP + JSON-transzformáció + üzleti logika (1153 sor, mindent visz) |
+| `Copy/CopyTranslator.cs` | **a fordítási logika** - felülettől és hálózattól független, tesztelt |
+| `Copy/ServerCatalog.cs` | egy szerver névtáblái (a fordítás bemenete) |
+| `Copy/TranslationReport.cs` | a fordítás jelentése: mi maradt ki, mi fordult át, mi blokkol |
+| `DuplicateTT.Tests/` | xUnit tesztek; minden P0/P1-es hibához tartozik egy |
+| `MainForm.cs` | UI + HTTP + a fordító vezérlése |
 | `MainForm.Designer.cs` | kézzel írt UI-felépítés, nem a designer generálta |
 | `LoginDialog.cs` | bejelentkezés az auth-server-backendhez, token + session megszerzése |
 | `SmartpageApiClient.cs` | UI-mentes wrapper a listalekérdezésekhez (a Load/Save hívások még nem itt vannak) |
@@ -105,6 +109,19 @@ dotnet build "DuplicateTT.csproj"
 dotnet publish "DuplicateTT.csproj" -c Release -r win-x64 --self-contained true `
   /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true
 ```
+
+## Tesztek
+
+```powershell
+dotnet test DuplicateTT.Tests\DuplicateTT.Tests.csproj
+```
+
+A fordítási logika (`Copy/CopyTranslator.cs`) szándékosan nem ismer sem felületet, sem
+hálózatot: bemenet a nyers JSON és a két névtábla, kimenet a módosított JSON és egy jelentés.
+Éppen ez az a rész, ahol a csendes adatvesztések keletkeztek, ezért itt van a tesztek súlypontja.
+
+**Ha a fordításhoz nyúlsz, előbb írj rá tesztet.** A meglévők mindegyike egy konkrét, mért
+hibához tartozik, és mutációval ellenőrizve is elbukik, ha a javítást visszaveszed.
 
 ## Ha módosítasz
 

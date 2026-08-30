@@ -154,7 +154,8 @@ namespace SmartpageTimetableDuplicateV1
             }
 
             string username = txtUsername.Text.Trim();
-            string password = txtPassword.Text.Trim();
+            // A jelszóban a szóköz értékes karakter - itt nem szabad levágni.
+            string password = txtPassword.Text;
 
             if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
             {
@@ -250,6 +251,16 @@ namespace SmartpageTimetableDuplicateV1
             // This method is called by the designer or can be left empty if controls are set up programmatically
             this.SuspendLayout();
             this.ResumeLayout(false);
+        }
+
+        /// <summary>A dialógus saját HttpClientHandlerét a Form.Dispose nem takarítja el.</summary>
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _httpClientHandler?.Dispose();
+            }
+            base.Dispose(disposing);
         }
     }
 }

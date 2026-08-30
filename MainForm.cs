@@ -12,6 +12,7 @@ using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using SmartpageTimetableDuplicateV1.Models;
+using SmartpageTimetableDuplicateV1.Copy;
 
 namespace SmartpageTimetableDuplicateV1
 {
@@ -34,12 +35,12 @@ namespace SmartpageTimetableDuplicateV1
         private TimetableItem? _loadedTimetableItem;
         private LayoutItem? _loadedLayoutItem;
         private List<LayoutItems>? _loadedLayoutItems;
-        private List<DisplayInfo> _displaysLoad = new List<DisplayInfo>();
-        private List<DisplayInfo> _displaysSave = new List<DisplayInfo>();
+        private List<NamedEntity> _displaysLoad = new List<NamedEntity>();
+        private List<NamedEntity> _displaysSave = new List<NamedEntity>();
         private List<RasterFontInfo> _rasterFontsLoad = new List<RasterFontInfo>();
         private List<RasterFontInfo> _rasterFontsSave = new List<RasterFontInfo>();
-        private List<GroupInfo> _groupsLoad = new List<GroupInfo>();
-        private List<GroupInfo> _groupsSave = new List<GroupInfo>();
+        private List<NamedEntity> _groupsLoad = new List<NamedEntity>();
+        private List<NamedEntity> _groupsSave = new List<NamedEntity>();
         private Dictionary<int, string> _itemTypeLoad = new Dictionary<int, string>();
         private Dictionary<int, string> _itemTypeSave = new Dictionary<int, string>();
         private Dictionary<int, string> _anchorXLoad = new Dictionary<int, string>();
@@ -223,12 +224,6 @@ namespace SmartpageTimetableDuplicateV1
             return new PostResult(response.IsSuccessStatusCode, false, response.StatusCode, body, error);
         }
 
-        // A szerverek között az ID-k nem hordozhatók, a nevek igen - de nem mindig karakterre
-        // pontosan: a PROD-on például a "SourceSans3-Bold " fontcsalád neve záró szóközzel
-        // szerepel, a DEMO-n anélkül. Minden név szerinti párosítás ezen a normalizáláson megy át.
-        private static bool NameEquals(string? a, string? b)
-            => string.Equals(a?.Trim(), b?.Trim(), StringComparison.OrdinalIgnoreCase);
-
         private static void ApplyAuthHeaders(HttpClient client, string? auth, string? session)
         {
             client.DefaultRequestHeaders.Clear();
@@ -341,16 +336,92 @@ namespace SmartpageTimetableDuplicateV1
                 SetStatus("⚠️ Entity típus megváltozott --> előző elem törölve.", Color.Orange);
             }
         }
+        /// <summary>
+        /// A betöltött névtáblákból összeállítja a fordító bemenetét. A fordítás maga a
+        /// felülettől és a hálózattól független CopyTranslator dolga - ez a metódus a híd.
+        /// </summary>
+        private ServerCatalog BuildCatalog(bool fromLoadServer) => new()
+        {
+            ServerKey = (fromLoadServer ? cmbServerLoad : cmbServerSave).SelectedItem?.ToString() ?? "?",
+            Displays = fromLoadServer ? _displaysLoad : _displaysSave,
+            Groups = fromLoadServer ? _groupsLoad : _groupsSave,
+            Images = fromLoadServer ? _imagesLoad : _imagesSave,
+            Grids = fromLoadServer ? _gridsLoad : _gridsSave,
+            Timetables = fromLoadServer ? _timetablesLoad : _timetablesSave,
+            Stops = fromLoadServer ? _stopsLoad : _stopsSave,
+            States = fromLoadServer ? _statesLoad : _statesSave,
+            RasterFonts = fromLoadServer ? _rasterFontsLoad : _rasterFontsSave,
+            ElementTypes = fromLoadServer ? _itemTypeLoad : _itemTypeSave,
+            AnchorX = fromLoadServer ? _anchorXLoad : _anchorXSave,
+            AnchorY = fromLoadServer ? _anchorYLoad : _anchorYSave,
+            TextColors = fromLoadServer ? _textColorLoad : _textColorSave,
+        };
 
-        private record DisplayInfo(int Id, string Name);
-        private record RasterFontInfo(int Id, string TtFontName, int Size);
-        private record GroupInfo(int Id, string Name);
+        /// <summary>A fordító a mentés elején jön létre, a friss névtáblákkal.</summary>
+        private CopyTranslator NewTranslator()
+            => new(BuildCatalog(true), BuildCatalog(false), IsSameServer());
+
+        /// <summary>A fordító jelentését átveszi a felület saját listáiba (és így a naplóba is).</summary>
+        private void ReportTranslation(CopyTranslator translator)
+        {
+            foreach (string message in translator.Report.Skipped)
+            {
+                if (_skipped.Contains(message)) continue;
+                _skipped.Add(message);
+                SetStatus("⚠️ Figyelem: " + message, Color.Orange);
+            }
+            foreach (var kv in translator.Report.Conversions)
+            {
+                _conversions[kv.Key] = kv.Value;
+            }
+            foreach (string problem in translator.Report.Blocking)
+            {
+                if (!_blockingProblems.Contains(problem)) _blockingProblems.Add(problem);
+            }
+        }
+
+        /// <summary>
+        /// A képhivatkozás rendezése. A döntést a fordító hozza (megvan-e a célon, kell-e
+        /// feltölteni); ez a metódus csak a hálózati részt teszi hozzá, amit a fordító
+        /// szándékosan nem ismer.
+        /// </summary>
+        private async Task<bool> ResolveImageAsync(CopyTranslator translator, JsonObject itemObj, string field, string itemName)
+        {
+            var lookup = translator.LookupImage(itemObj, field, itemName);
+            switch (lookup.Kind)
+            {
+                case CopyTranslator.ImageLookupKind.NothingToDo:
+                case CopyTranslator.ImageLookupKind.FoundOnTarget:
+                    return true;
+
+                case CopyTranslator.ImageLookupKind.MissingOnSource:
+                    return false;
+
+                case CopyTranslator.ImageLookupKind.NeedsUpload:
+                    if (DryRun)
+                    {
+                        SetStatus($"🔍 [száraz futtatás] a(z) \"{lookup.Name}\" kép feltöltésre kerülne a {cmbServerSave.SelectedItem} szerverre ({itemName}).", Color.RoyalBlue);
+                        NoteConversion("feltöltendő kép");
+                        return true;
+                    }
+
+                    int? uploadedId = await UploadImageAsync(translator, lookup.SourceId, lookup.Name);
+                    if (uploadedId == null)
+                    {
+                        NoteSkipped($"a(z) \"{lookup.Name}\" kép feltöltése nem sikerült ({itemName}).");
+                        return false;
+                    }
+                    translator.RegisterUploadedImage(itemObj, field, uploadedId.Value, lookup.Name);
+                    return true;
+
+                default:
+                    return false;
+            }
+        }
+
         private record AnchorXItem(int Id, string Label);
         private record AnchorYItem(int Id, string Label);
         private record TextColorItem(int Id, string Label);
-
-        /// <summary>Bármi, amit név szerint kell újrakeresni a másik szerveren (kép, rács, menetrend).</summary>
-        private record NamedEntity(int Id, string Name);
 
         // Az id + name szerkezet közös a képeknél, rácsoknál és menetrendeknél.
         private async Task<List<NamedEntity>?> LoadNamedListAsync(string endpoint, bool fromLoadServer)
@@ -443,18 +514,18 @@ namespace SmartpageTimetableDuplicateV1
             return list;
         }
 
-        private async Task<List<DisplayInfo>?> LoadDisplaysList(bool fromLoadServer)
+        private async Task<List<NamedEntity>?> LoadDisplaysList(bool fromLoadServer)
         {
             return await LoadListAsync("display/list", fromLoadServer, DeserializeDisplaysList);
         }
-        private List<DisplayInfo>? DeserializeDisplaysList(string body)
+        private List<NamedEntity>? DeserializeDisplaysList(string body)
         {
             var root = JsonNode.Parse(body) as JsonArray;
             if (root == null)
             {
                 return null;
             }
-            var list = new List<DisplayInfo>();
+            var list = new List<NamedEntity>();
             foreach (var item in root)
             {
                 if (item is JsonObject groupObj)
@@ -463,25 +534,25 @@ namespace SmartpageTimetableDuplicateV1
                     string? name = groupObj["name"]?.GetValue<string?>();
                     if (id.HasValue && !string.IsNullOrEmpty(name))
                     {
-                        list.Add(new DisplayInfo(id.Value, name!));
+                        list.Add(new NamedEntity(id.Value, name!));
                     }
                 }
             }
             return list;
         }
 
-        private async Task<List<GroupInfo>?> LoadGroupsList(bool fromLoadServer)
+        private async Task<List<NamedEntity>?> LoadGroupsList(bool fromLoadServer)
         {
             return await LoadListAsync("group/list", fromLoadServer, DeserializeGroupsList);
         }
-        private List<GroupInfo>? DeserializeGroupsList(string body)
+        private List<NamedEntity>? DeserializeGroupsList(string body)
         {
             var root = JsonNode.Parse(body) as JsonArray;
             if (root == null)
             {
                 return null;
             }
-            var list = new List<GroupInfo>();
+            var list = new List<NamedEntity>();
             foreach (var item in root)
             {
                 if (item is JsonObject groupObj)
@@ -490,7 +561,7 @@ namespace SmartpageTimetableDuplicateV1
                     string? name = groupObj["name"]?.GetValue<string?>();
                     if (id.HasValue && !string.IsNullOrEmpty(name))
                     {
-                        list.Add(new GroupInfo(id.Value, name!));
+                        list.Add(new NamedEntity(id.Value, name!));
                     }
                 }
             }
@@ -534,79 +605,6 @@ namespace SmartpageTimetableDuplicateV1
         }
 
 
-        private void RemoveIdProperties(JsonNode? node)
-        {
-            if (node is JsonObject obj)
-            {
-                // Előbb csak besorolunk, módosítani csak a ciklus után szabad: az értékcsere
-                // (ReplaceWith) ugyanazt az objektumot írja, amin a foreach fut.
-                var toRemove = new List<string>();
-                var displayIdKeys = new List<string>();
-                var groupIdsKeys = new List<string>();
-                var rasterFontKeys = new List<string>();
-
-                foreach (var kv in obj)
-                {
-                    var propName = kv.Key;
-                    if (propName.Equals("imageId", StringComparison.OrdinalIgnoreCase))
-                    {
-                        // A háttérképet nem bántjuk: a hívó kezeli (név szerinti keresés, és ha
-                        // a célon nincs meg, feltöltés). Korábban itt egyszerűen törlődött.
-                    }
-                    else if (propName.Equals("imageContent", StringComparison.OrdinalIgnoreCase))
-                    {
-                        toRemove.Add(propName);
-                    }
-                    else if (propName.Equals("displayId", StringComparison.OrdinalIgnoreCase))
-                    {
-                        displayIdKeys.Add(propName);
-                    }
-                    else if (propName.Equals("groupIds", StringComparison.OrdinalIgnoreCase))
-                    {
-                        groupIdsKeys.Add(propName);
-                    }
-                    else if (propName.Equals("rasterFontId", StringComparison.OrdinalIgnoreCase))
-                    {
-                        rasterFontKeys.Add(propName);
-                    }
-                    else if (propName.Equals("id", StringComparison.OrdinalIgnoreCase) ||
-                        propName.EndsWith("Id", StringComparison.OrdinalIgnoreCase))
-                    {
-                        toRemove.Add(propName);
-                    }
-                }
-
-                foreach (var name in toRemove)
-                {
-                    obj.Remove(name);
-                }
-                foreach (var key in displayIdKeys)
-                {
-                    ConvertDisplayId(obj, key);
-                }
-                foreach (var key in groupIdsKeys)
-                {
-                    ConvertGroupIds(obj[key]);
-                }
-                foreach (var key in rasterFontKeys)
-                {
-                    ConvertRasterFontId(obj, key);
-                }
-
-                foreach (var kv in obj)
-                {
-                    RemoveIdProperties(kv.Value);
-                }
-            }
-            else if (node is JsonArray arr)
-            {
-                foreach (var item in arr)
-                {
-                    RemoveIdProperties(item);
-                }
-            }
-        }
-
         /// <summary>Azonos szerveren belül az eredeti ID-k a helyesek - ilyenkor nem fordítunk.</summary>
         private bool IsSameServer()
             => cmbServerLoad.SelectedItem?.ToString() == cmbServerSave.SelectedItem?.ToString();
@@ -637,124 +635,13 @@ namespace SmartpageTimetableDuplicateV1
         }
 
         /// <summary>
-        /// Load-oldali ID -> címke -> Save-oldali ID fordítás (elemtípus, anchor, szín). Igazzal tér
-        /// vissza, ha a mező nincs kitöltve (nincs mit fordítani) vagy a fordítás sikerült.
-        /// </summary>
-        private bool TryConvertByLabel(JsonObject itemObj, string field,
-            Dictionary<int, string> loadMap, Dictionary<int, string> saveMap,
-            string what, string itemName)
-        {
-            if (itemObj[field] is not JsonValue value || !value.TryGetValue(out int loadId))
-                return true;
-
-            if (!loadMap.TryGetValue(loadId, out string? label) || string.IsNullOrEmpty(label))
-            {
-                NoteSkipped($"a Load ({cmbServerLoad.SelectedItem}) szerveren nincs {field}={loadId} ({itemName}).");
-                return false;
-            }
-
-            // A találat hiányát a null érték jelzi, nem a 0-s kulcs: a 0 elvileg érvényes ID is lehet.
-            var match = saveMap.FirstOrDefault(kvp => NameEquals(kvp.Value, label));
-            if (match.Value == null)
-            {
-                NoteSkipped($"a Save ({cmbServerSave.SelectedItem}) szerveren nincs '{label}' {what} ({itemName}).");
-                return false;
-            }
-
-            // Csak a tényleges változást számoljuk: egy szerveren belül az ID ugyanaz marad.
-            if (match.Key != loadId) NoteConversion(what);
-            itemObj[field] = match.Key;
-            return true;
-        }
-
-        /// <summary>
-        /// Load-oldali ID -> név -> Save-oldali ID fordítás (kép, rács, menetrend). Egy szerveren
-        /// belül nem fut le: ott az eredeti ID a helyes.
-        /// </summary>
-        private bool TryConvertByName(JsonObject itemObj, string field,
-            List<NamedEntity> loadList, List<NamedEntity> saveList,
-            string what, string itemName)
-        {
-            if (IsSameServer()) return true;
-            if (itemObj[field] is not JsonValue value || !value.TryGetValue(out int loadId))
-                return true;
-
-            var loadEntity = loadList.FirstOrDefault(e => e.Id == loadId);
-            if (loadEntity == null)
-            {
-                NoteSkipped($"a Load ({cmbServerLoad.SelectedItem}) szerveren nincs {what} ezzel az azonosítóval: {loadId} ({itemName}).");
-                return false;
-            }
-
-            var saveEntity = saveList.FirstOrDefault(e => NameEquals(e.Name, loadEntity.Name));
-            if (saveEntity == null)
-            {
-                NoteSkipped($"a Save ({cmbServerSave.SelectedItem}) szerveren nincs '{loadEntity.Name}' nevű {what} ({itemName}).");
-                return false;
-            }
-
-            if (saveEntity.Id != loadId) NoteConversion(what);
-            itemObj[field] = saveEntity.Id;
-            return true;
-        }
-
-        /// <summary>
-        /// A kép fordítása név szerint, és ha a cél szerveren nincs meg, feltöltés a forrásból.
-        /// A mérés szerint erre szükség van: PROD -> DEMO irányban a képnevek 84%-a hiányzik a
-        /// célról, tehát a puszta névkeresés ott a layoutok többségét használhatatlanná tenné.
-        /// </summary>
-        private async Task<bool> TryConvertImageAsync(JsonObject itemObj, string field, string itemName)
-        {
-            if (IsSameServer()) return true;
-            if (itemObj[field] is not JsonValue value || !value.TryGetValue(out int loadId)) return true;
-
-            var loadImage = _imagesLoad.FirstOrDefault(e => e.Id == loadId);
-            if (loadImage == null)
-            {
-                NoteSkipped($"a Load ({cmbServerLoad.SelectedItem}) szerveren nincs kép ezzel az azonosítóval: {loadId} ({itemName}).");
-                return false;
-            }
-
-            // 1. Van-e már ilyen nevű kép a célon? Ez a gyakoribb eset.
-            var saveImage = _imagesSave.FirstOrDefault(e => NameEquals(e.Name, loadImage.Name));
-            if (saveImage != null)
-            {
-                if (saveImage.Id != loadId) NoteConversion("kép");
-                itemObj[field] = saveImage.Id;
-                return true;
-            }
-
-            // 2. Nincs meg - fel kell tölteni. Száraz futtatásnál nem töltünk fel semmit.
-            if (DryRun)
-            {
-                SetStatus($"🔍 [száraz futtatás] a(z) \"{loadImage.Name}\" kép feltöltésre kerülne a {cmbServerSave.SelectedItem} szerverre ({itemName}).", Color.RoyalBlue);
-                NoteConversion("feltöltendő kép");
-                return true;
-            }
-
-            int? uploadedId = await UploadImageAsync(loadId, loadImage.Name);
-            if (uploadedId == null)
-            {
-                NoteSkipped($"a(z) \"{loadImage.Name}\" kép feltöltése nem sikerült ({itemName}).");
-                return false;
-            }
-
-            // A frissen feltöltött kép bekerül a névtáblába: ha több elem is hivatkozik rá,
-            // a következő már megtalálja, és nem töltjük fel kétszer.
-            _imagesSave.Add(new NamedEntity(uploadedId.Value, loadImage.Name));
-            NoteConversion("feltöltött kép");
-            itemObj[field] = uploadedId.Value;
-            return true;
-        }
-
-        /// <summary>
         /// Kép átvitele a Load szerverről a Save szerverre. A tartalom base64-ként utazik.
         ///
         /// A szerver a feltöltött képet újrakódolhatja: egy 4 bites palettás PNG 8 bitesként jön
         /// vissza. A felbontás és a színtípus megmarad, tehát a kép tartalma nem sérül, de
         /// byte-azonosságra nem szabad építeni.
         /// </summary>
-        private async Task<int?> UploadImageAsync(int loadImageId, string name)
+        private async Task<int?> UploadImageAsync(CopyTranslator translator, int loadImageId, string name)
         {
             SetStatus($"⬆️ A(z) \"{name}\" kép átvitele a {cmbServerSave.SelectedItem} szerverre...", Color.RoyalBlue);
 
@@ -793,7 +680,7 @@ namespace SmartpageTimetableDuplicateV1
             image.Remove("id");
             image.Remove("imageUrl");
             image.Remove("version");
-            ConvertGroupIds(image["groupIds"]);
+            translator.TranslateGroupIdsOf(image);
 
             // 3. Feltöltés a célra.
             var result = await PostJsonAsync($"{_baseSaveUrl}/image/save", image.ToJsonString(), $"Kép feltöltése: {name}");
@@ -810,144 +697,6 @@ namespace SmartpageTimetableDuplicateV1
 
             SetStatus($"✅ A(z) \"{name}\" kép átvitte (új ID={newId}).", Color.ForestGreen);
             return newId;
-        }
-
-        /// <summary>
-        /// A raszterfontot név + méret pár azonosítja. Nem dob kivételt, mint a menetrend-ági
-        /// párja: itt egyetlen elem hibája miatt nem kell az egész műveletet eldobni.
-        /// </summary>
-        private bool TryConvertRasterFontField(JsonObject itemObj, string field, string itemName)
-        {
-            if (IsSameServer()) return true;
-            if (itemObj[field] is not JsonValue value || !value.TryGetValue(out int loadId))
-                return true;
-
-            var loadFont = _rasterFontsLoad.FirstOrDefault(rf => rf.Id == loadId);
-            if (loadFont == null)
-            {
-                NoteSkipped($"a Load ({cmbServerLoad.SelectedItem}) szerveren nincs raszterfont ezzel az azonosítóval: {loadId} ({itemName}).");
-                return false;
-            }
-
-            var saveFont = _rasterFontsSave.FirstOrDefault(rf => NameEquals(rf.TtFontName, loadFont.TtFontName) && rf.Size == loadFont.Size);
-            if (saveFont == null)
-            {
-                NoteSkipped($"a Save ({cmbServerSave.SelectedItem}) szerveren nincs '{loadFont.TtFontName}' {loadFont.Size}px raszterfont ({itemName}) - a fontok API-ból nem vihetők át, ezt kézzel kell pótolni.");
-                return false;
-            }
-
-            if (saveFont.Id != loadId) NoteConversion("raszterfont");
-            itemObj[field] = saveFont.Id;
-            return true;
-        }
-
-        private void ConvertRasterFontId(JsonObject parent, string key)
-        {
-            if (parent[key]?.GetValue<int?>() is not int rasterFontId)
-            {
-                SetStatus($"❌ Hiba: a Load szerveren nincs rasterFontId: {parent[key]}", Color.Red);
-                throw new Exception("Invalid rasterFontId value");
-            }
-
-            var rasterFontLoad = _rasterFontsLoad.FirstOrDefault(rf => rf.Id == rasterFontId);
-            if (rasterFontLoad == null)
-            {
-                SetStatus($"❌ Hiba: a Load szerveren nem található a rasterFontId: {rasterFontId}", Color.Red);
-                throw new Exception("No matching raster font on Load server");
-            }
-
-            var rasterFontSave = _rasterFontsSave.FirstOrDefault(rf => NameEquals(rf.TtFontName, rasterFontLoad.TtFontName)
-                                                                        && rf.Size == rasterFontLoad.Size);
-            if (rasterFontSave == null)
-            {
-                // Nem dobunk kivételt a fordítás közepén: a hiányt összegyűjtjük, és a hívó egyben,
-                // érthetően jelenti. A fontok API-ból nem vihetők át, tehát ez blokkoló hiba.
-                _blockingProblems.Add($"'{rasterFontLoad.TtFontName}' {rasterFontLoad.Size}px raszterfont hiányzik a {cmbServerSave.SelectedItem} szerverről");
-                return;
-            }
-
-            // Az értékadás korábban egy "kv.Value is JsonObject" feltétel mögött állt - a mező
-            // viszont szám, sosem objektum, így a fordítás eredménye soha nem íródott vissza.
-            parent[key] = rasterFontSave.Id;
-        }
-
-        private void ConvertDisplayId(JsonObject parent, string key)
-        {
-            if (parent[key] == null) return;
-            if (parent[key]?.GetValue<int?>() is not int displayId)
-            {
-                SetStatus($"❌ Hiba: a Load szerveren nincs displayId: {parent[key]}", Color.Red);
-                throw new Exception("Invalid displayId value");
-            }
-
-            var displayLoad = _displaysLoad.FirstOrDefault(d => d.Id == displayId);
-            if (displayLoad == null)
-            {
-                SetStatus($"❌ Hiba: a Load szerveren nem található a displayId: {displayId}", Color.Red);
-                throw new Exception("No matching display on Load server");
-            }
-
-            var displaySave = _displaysSave.FirstOrDefault(d => NameEquals(d.Name, displayLoad.Name));
-            if (displaySave == null)
-            {
-                SetStatus($"❌ Hiba: a Save szerveren nem található a {displayLoad.Name} kijelző", Color.Red);
-                throw new Exception("No matching display on Save server");
-            }
-
-            parent[key] = displaySave.Id;
-        }
-
-        private void ConvertGroupIds(JsonNode? node)
-        {
-            if (IsSameServer())
-            {
-                return; // Ugyanaz a szerver, nincs szükség konverzióra
-            }
-
-            // Handle case where node is the groupIds array itself
-            if (node is JsonArray arr && arr.Count > 0)
-            {
-                // Check if this is an array of integers (groupIds)
-                var firstElem = arr.FirstOrDefault();
-                if (firstElem?.GetValue<int?>().HasValue ?? false)
-                {
-                    // This is the groupIds array, map each ID
-                    var newIds = new List<int>();
-                    foreach (var v in arr)
-                    {
-                        int? loadId = v?.GetValue<int?>();
-                        if (!loadId.HasValue)
-                        {
-                            NoteSkipped($"érvénytelen jogosultsági csoport (groupId): {v}");
-                            continue; // Kihagyja ezt az elemet, folytatja a többivel
-                        }
-
-                        var gLoad = _groupsLoad.FirstOrDefault(g => g.Id == loadId.Value);
-                        if (gLoad == null)
-                        {
-                            NoteSkipped($"a Load szerveren nincs groupId={loadId} jogosultsági csoport.");
-                            continue; // Kihagyja ezt az elemet, folytatja a többivel
-                        }
-
-                        var gSave = _groupsSave.FirstOrDefault(g => NameEquals(g.Name, gLoad.Name));
-                        if (gSave == null)
-                        {
-                            NoteSkipped($"a Save szerveren nincs '{gLoad.Name}' jogosultsági csoport.");
-                            continue; // Kihagyja ezt az elemet, folytatja a többivel
-                        }
-
-                        newIds.Add(gSave.Id);
-                    }
-
-                    // Replace the array content in-place
-                    arr.Clear();
-                    foreach (var id in newIds)
-                    {
-                        arr.Add(id);
-                    }
-                    return;
-                }
-            }
         }
 
         /// <summary>
@@ -1377,7 +1126,8 @@ namespace SmartpageTimetableDuplicateV1
                     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
                 });
 
-                RemoveIdProperties(node);
+                var translator = NewTranslator();
+                translator.TranslateTimetable(node);
 
                 if (node is JsonObject nodeObj)
                 {
@@ -1386,12 +1136,14 @@ namespace SmartpageTimetableDuplicateV1
                     // A háttérkép átvitele: név szerint keressük a célon, és ha nincs meg,
                     // feltöltjük. Ha ez sem megy, a mező kimarad - így legalább a menetrend
                     // létrejön, csak háttérkép nélkül.
-                    if (!await TryConvertImageAsync(nodeObj, "imageId", "háttérkép"))
+                    if (!await ResolveImageAsync(translator, nodeObj, "imageId", "háttérkép"))
                     {
                         nodeObj.Remove("imageId");
                         NoteSkipped("a háttérkép kimarad a menetrendből - kézzel pótolandó.");
                     }
                 }
+
+                ReportTranslation(translator);
 
                 DisplayTxtJson(node);
 
@@ -1493,7 +1245,7 @@ namespace SmartpageTimetableDuplicateV1
             }
 
             string name = txtSaveName.Text.Trim();
-            var clash = existing.FirstOrDefault(e => NameEquals(e.Name, name));
+            var clash = existing.FirstOrDefault(e => CopyTranslator.NameEquals(e.Name, name));
             if (clash == null) return true;
 
             string suggestion = SuggestFreeName(name, existing);
@@ -1536,7 +1288,7 @@ namespace SmartpageTimetableDuplicateV1
             for (int i = start; i < start + 1000; i++)
             {
                 string candidate = $"{baseName} ({i})";
-                if (!existing.Any(e => NameEquals(e.Name, candidate)))
+                if (!existing.Any(e => CopyTranslator.NameEquals(e.Name, candidate)))
                 {
                     return candidate;
                 }
@@ -1566,45 +1318,26 @@ namespace SmartpageTimetableDuplicateV1
             SetStatus($"📍 {sourceSlides.Count} megálló-kötés átvitele...", Color.Black);
             int created = 0;
 
+            var translator = NewTranslator();
             foreach (var slide in sourceSlides)
             {
-                string stopName = ResolveName(_stopsLoad, slide["stopId"], "?");
-                string stateName = ResolveName(_statesLoad, slide["stateId"], "?");
-
-                var stop = _stopsSave.FirstOrDefault(s => NameEquals(s.Name, stopName));
-                if (stop == null)
+                string label = translator.DescribeSlide(slide);
+                var payload = translator.TranslateSlide(slide, newLayoutId);
+                if (payload == null)
                 {
-                    NoteSkipped($"a megálló-kötés kimarad: a Save szerveren nincs '{stopName}' nevű megálló.");
+                    ReportTranslation(translator);
                     continue;
                 }
-
-                var state = _statesSave.FirstOrDefault(s => NameEquals(s.Name, stateName));
-                if (state == null)
-                {
-                    NoteSkipped($"a megálló-kötés kimarad ({stopName}): a Save szerveren nincs '{stateName}' nevű állapot.");
-                    continue;
-                }
-
-                var payload = new JsonObject
-                {
-                    ["layoutId"] = newLayoutId,
-                    ["stopId"] = stop.Id,
-                    ["stateId"] = state.Id,
-                    ["prioritySn"] = slide["prioritySn"]?.GetValue<int?>() ?? 1,
-                    ["timer"] = slide["timer"]?.GetValue<int?>() ?? 0,
-                    ["informationSlide"] = slide["informationSlide"]?.GetValue<bool?>() ?? false,
-                    ["description"] = slide["description"]?.GetValue<string?>()
-                };
 
                 var result = await PostJsonAsync($"{_baseSaveUrl}/slide/save", payload.ToJsonString(),
-                    $"Megálló-kötés: {stopName} / {stateName}");
+                    $"Megálló-kötés: {label}");
                 if (result.Success)
                 {
                     created++;
                 }
                 else
                 {
-                    NoteSkipped($"a megálló-kötés mentése sikertelen ({stopName} / {stateName}) - {result.Error}");
+                    NoteSkipped($"a megálló-kötés mentése sikertelen ({label}) - {result.Error}");
                 }
             }
 
@@ -1630,12 +1363,6 @@ namespace SmartpageTimetableDuplicateV1
                            .Select(o => (JsonObject)o.DeepClone())
                            .ToList();
             });
-        }
-
-        private static string ResolveName(List<NamedEntity> table, JsonNode? idNode, string fallback)
-        {
-            if (idNode?.GetValue<int?>() is not int id) return fallback;
-            return table.FirstOrDefault(e => e.Id == id)?.Name ?? fallback;
         }
 
         /// <summary>
@@ -1827,12 +1554,13 @@ namespace SmartpageTimetableDuplicateV1
                     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
                 });
 
+                var translator = NewTranslator();
+
                 if (node is JsonObject nodeObj)
                 {
                     nodeObj.Remove("id");
                     nodeObj["name"] = newName;
-                    ConvertDisplayId(nodeObj, "displayId");
-                    ConvertGroupIds(nodeObj["groupIds"]);
+                    translator.TranslateLayoutHeader(nodeObj);
                 }
 
                 DisplayTxtJson(node);
@@ -1866,31 +1594,10 @@ namespace SmartpageTimetableDuplicateV1
 
                         string itemName = layoutItem.Name;
 
-                        // Címke szerinti fordítás: a Load-oldali ID-hez tartozó szöveges címkét
-                        // keressük meg a Save szerveren, és annak az ID-jét írjuk vissza.
-                        itemIsValid &= TryConvertByLabel(itemObj, "elementTypeId", _itemTypeLoad, _itemTypeSave, "elemtípus", itemName);
-                        itemObj.Remove("elementTypeLabel");
-
-                        itemIsValid &= TryConvertByLabel(itemObj, "anchorX", _anchorXLoad, _anchorXSave, "AnchorX érték", itemName);
-                        itemObj.Remove("anchorXLabel");
-
-                        itemIsValid &= TryConvertByLabel(itemObj, "anchorY", _anchorYLoad, _anchorYSave, "AnchorY érték", itemName);
-                        itemObj.Remove("anchorYLabel");
-
-                        itemIsValid &= TryConvertByLabel(itemObj, "fontColor", _textColorLoad, _textColorSave, "TextColor érték", itemName);
-                        itemIsValid &= TryConvertByLabel(itemObj, "backgroundColor", _textColorLoad, _textColorSave, "TextColor érték", itemName);
-
-                        // Név szerinti fordítás. Ezek a mezők korábban érintetlenül mentek át, így
-                        // eltérő szerverre másolva vagy 422-t okoztak, vagy - ha az ID ott véletlenül
-                        // létezett - némán egy másik képre/rácsra/menetrendre mutattak.
-                        // A kép külön úton megy: ha a célon nincs meg, feltöltjük.
-                        itemIsValid &= await TryConvertImageAsync(itemObj, "imageId", itemName);
-                        itemIsValid &= TryConvertByName(itemObj, "gridId", _gridsLoad, _gridsSave, "rács", itemName);
-                        itemIsValid &= TryConvertByName(itemObj, "dynamicTimetableId", _timetablesLoad, _timetablesSave, "dinamikus menetrend", itemName);
-
-                        // A raszterfont név + méret párral azonosítható, ezért külön úton megy.
-                        itemIsValid &= TryConvertRasterFontField(itemObj, "rasterFontId", itemName);
-                        itemObj.Remove("ttFontName");
+                        // Az összes hivatkozás fordítása a tesztelt, felülettől független
+                        // fordítóban történik; a kép külön úton megy, mert feltöltéssel járhat.
+                        itemIsValid &= translator.TranslateLayoutElement(itemObj, itemName);
+                        itemIsValid &= await ResolveImageAsync(translator, itemObj, "imageId", itemName);
 
                         if (itemIsValid)
                         {
@@ -1918,6 +1625,11 @@ namespace SmartpageTimetableDuplicateV1
                         SetStatus($"❌ Elem kihagyva a másolásból: {originLayoutItem.Name} - {originLayoutItem.ElementTypeLabel}", Color.Red);
                     }
                 }
+
+                ReportTranslation(translator);
+
+                // Van olyan hiány, amivel a mentés biztosan elbukna? Akkor ne is kezdjük el.
+                if (ReportBlockingProblems()) return;
 
                 // Itt még semmit nem írtunk a szerverre: ez az utolsó pont, ahol meg lehet állni.
                 if (!ConfirmCopy("Layout", _loadedLayoutItems?.Count ?? 0, itemsArray.Count))
