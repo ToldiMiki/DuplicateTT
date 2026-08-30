@@ -2,7 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 
-namespace SmartpageTimetableDuplicateV1.Copy
+namespace SmartPageDuplicate.Copy
 {
     /// <summary>
     /// A fordítás során összegyűlt megfigyelések. A fordító nem ír a felületre és nem dönt a

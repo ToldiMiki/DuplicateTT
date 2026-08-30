@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json.Nodes;
 
-namespace SmartpageTimetableDuplicateV1.Copy
+namespace SmartPageDuplicate.Copy
 {
     /// <summary>
     /// A másolás fordítási logikája: a forrás szerver azonosítóit a cél szerver azonosítóira

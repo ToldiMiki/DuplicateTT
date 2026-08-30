@@ -1,8 +1,8 @@
 using System.Text.Json.Nodes;
-using SmartpageTimetableDuplicateV1.Copy;
+using SmartPageDuplicate.Copy;
 using Xunit;
 
-namespace DuplicateTT.Tests;
+namespace SmartPageDuplicate.Tests;
 
 /// <summary>
 /// A fordítási logika tesztjei. Minden teszt egy konkrét, a PROD2 homokozón mért hibához

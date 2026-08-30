@@ -9,7 +9,7 @@ using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
-namespace SmartpageTimetableDuplicateV1
+namespace SmartPageDuplicate
 {
     /// <summary>
     /// Modal dialog for entering username and password, then authenticating against the Smartpage auth-server backend.

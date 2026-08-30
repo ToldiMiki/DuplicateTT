@@ -2,7 +2,7 @@ using System;
 using System.Drawing;
 using System.Windows.Forms;
 
-namespace SmartpageTimetableDuplicateV1
+namespace SmartPageDuplicate
 {
     /// <summary>
     /// A mentés előtti utolsó képernyő: mi fordítódik le, mi marad ki, és hova kerül a másolat.

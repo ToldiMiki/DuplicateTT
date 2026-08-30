@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Net.Http;
 using System.Threading.Tasks;
 
-namespace SmartpageTimetableDuplicateV1
+namespace SmartPageDuplicate
 {
     // Vékony, UI-mentes wrapper egy Smartpage szerver-kapcsolat köré (base URL + hitelesített
     // HttpClient): csak azt tudja, hogyan kell egy endpointot lekérdezni és a JSON választ

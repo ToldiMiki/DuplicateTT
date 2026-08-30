@@ -18,7 +18,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\DuplicateTT.csproj" />
+    <ProjectReference Include="..\SmartPageDuplicate.csproj" />
   </ItemGroup>
 
 </Project>

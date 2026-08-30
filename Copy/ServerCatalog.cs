@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace SmartpageTimetableDuplicateV1.Copy
+namespace SmartPageDuplicate.Copy
 {
     /// <summary>Név szerint azonosítható elem (kép, rács, menetrend, megálló, állapot, kijelző, csoport).</summary>
     public record NamedEntity(int Id, string Name);

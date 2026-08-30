@@ -6,7 +6,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace SmartpageTimetableDuplicateV1
+namespace SmartPageDuplicate
 {
     /// <summary>
     /// A backend strukturált hibaválasza. A szerver magyar nyelvű, mezőnév-szintű üzeneteket küld

@@ -16,7 +16,7 @@
 | `Copy/CopyTranslator.cs` | **a fordítási logika** - felülettől és hálózattól független, tesztelt |
 | `Copy/ServerCatalog.cs` | egy szerver névtáblái (a fordítás bemenete) |
 | `Copy/TranslationReport.cs` | a fordítás jelentése: mi maradt ki, mi fordult át, mi blokkol |
-| `DuplicateTT.Tests/` | xUnit tesztek; minden P0/P1-es hibához tartozik egy |
+| `SmartPageDuplicate.Tests/` | xUnit tesztek; minden P0/P1-es hibához tartozik egy |
 | `MainForm.cs` | UI + HTTP + a fordító vezérlése |
 | `MainForm.Designer.cs` | kézzel írt UI-felépítés, nem a designer generálta |
 | `LoginDialog.cs` | bejelentkezés az auth-server-backendhez, token + session megszerzése |
@@ -33,8 +33,8 @@ plusz a két ComboBox inicializálóját a `MainForm` konstruktorában.
 ## Adatfolyam
 
 **Menetrend beolvasása:** `GET dynamic-timetable/load?id={id}` → `TimetableItem`.
-**Menetrend mentése:** a modellt JSON-fává szerializálja, `RemoveIdProperties` végigjárja
-(ID-ket töröl vagy fordít), majd `POST dynamic-timetable/save`.
+**Menetrend mentése:** a modellt JSON-fává szerializálja, `CopyTranslator.TranslateTimetable`
+végigjárja (azonosítókat töröl vagy fordít), majd `POST dynamic-timetable/save`.
 
 **Layout beolvasása:** `GET layout/load/{id}` (fejléc) + `GET element/list/layoutId?layoutId={id}` (elemek).
 **Layout mentése:** `POST layout/save` → visszakapott új ID → `POST element/save/all`.
@@ -59,9 +59,10 @@ hivatkozást név szerint kell újrakeresni a cél szerveren:
 **Névösszehasonlításnál mindig `Trim()`** — a PROD-on van olyan fontcsalád, aminek a neve
 záró szóközzel szerepel (`"SourceSans3-Bold "`), a DEMO-n anélkül.
 
-**Azonos szerveren belül nem szabad fordítani** — ott az eredeti ID a helyes. A
-megkülönböztetés a `cmbServerLoad` és `cmbServerSave` kiválasztott értékének
-összehasonlításával történik (lásd `ConvertGroupIds`, `RemoveIdProperties`).
+**Azonos szerveren belül nem szabad fordítani** — ott az eredeti azonosító a helyes. A
+megkülönböztetés a `CopyTranslator.IsSameServer` értékén múlik, amit a `MainForm.NewTranslator()`
+állít be a két legördülő összehasonlításából. Ugyanez az elágazás dönt a megálló-kötések
+átviteléről is.
 
 ## Konvenciók
 
@@ -88,32 +89,33 @@ A backend strukturált, magyar hibákat ad (`fieldErrors` / `logicalErrors`, 422
 Mentés előtt érdemes ellenőrizni a szerver üzleti szabályait (első elem típusa, háttérkép
 felbontása, névegyediség) — lásd ugyanott a 4. fejezetet.
 
-## Ismert hiányosságok
+## Ismert korlátok
 
 - A raszterfontok **nem vihetők át** szerverek között: a tartalmuk nem olvasható ki az
-  API-ból. Csak jelezni lehet, ha hiányoznak a célról.
-- A másolás **nem hozza létre a slide-okat** (megálló ↔ layout kapcsolat), így a másolat
-  egyetlen megállón sem jelenik meg. Szándék szerint: szerverek között követnie kellene,
-  szerveren belüli duplikálásnál nem.
-- Nincs automata teszt.
+  API-ból (a `save` fájlt követel, a `load` nem ad vissza egyet sem). Hiányzó fontnál a
+  művelet el sem indul, hanem megmondja, mit kell kézzel feltölteni.
+- A képfeltöltésnél a szerver **újrakódolhatja** a képet (4 bites paletta → 8 bites). A
+  tartalom nem sérül, de byte-azonosságra nem szabad építeni.
+- A HTTP-hívások még a `MainForm`-ban vannak, nem a `SmartpageApiClient`-ben. A fordítás
+  viszont már külön, tesztelt osztályban van — a tesztelhetőség szempontjából ez a fontos.
 
 ## Build / futtatás
 
 ```powershell
-dotnet build "DuplicateTT.csproj"
+dotnet build "SmartPageDuplicate.csproj"
 ```
 
 Önálló exe (a `.vscode/tasks.json`-ban is szerepel):
 
 ```powershell
-dotnet publish "DuplicateTT.csproj" -c Release -r win-x64 --self-contained true `
+dotnet publish "SmartPageDuplicate.csproj" -c Release -r win-x64 --self-contained true `
   /p:PublishSingleFile=true /p:IncludeNativeLibrariesForSelfExtract=true
 ```
 
 ## Tesztek
 
 ```powershell
-dotnet test DuplicateTT.Tests\DuplicateTT.Tests.csproj
+dotnet test SmartPageDuplicate.Tests\SmartPageDuplicate.Tests.csproj
 ```
 
 A fordítási logika (`Copy/CopyTranslator.cs`) szándékosan nem ismer sem felületet, sem

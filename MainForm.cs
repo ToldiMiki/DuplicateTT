@@ -11,10 +11,10 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using SmartpageTimetableDuplicateV1.Models;
-using SmartpageTimetableDuplicateV1.Copy;
+using SmartPageDuplicate.Models;
+using SmartPageDuplicate.Copy;
 
-namespace SmartpageTimetableDuplicateV1
+namespace SmartPageDuplicate
 {
     public partial class MainForm : Form
     {
@@ -135,6 +135,16 @@ namespace SmartpageTimetableDuplicateV1
             { "PROD2", "https://smartpage2.hclinear.hu/backend/api/v1" }
         };
 
+        /// <summary>A szerelvény verziója „v2.0.0" alakban, a csprojban megadott érték alapján.</summary>
+        private static string AppVersion
+        {
+            get
+            {
+                var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
+                return version == null ? "" : $"v{version.Major}.{version.Minor}.{version.Build}";
+            }
+        }
+
         public MainForm()
         {
             _httpClientLoad = new HttpClient(_httpClientHandler, disposeHandler: false);
@@ -152,12 +162,9 @@ namespace SmartpageTimetableDuplicateV1
             cmbServerSave.SelectedIndexChanged += CmbServer_SelectedIndexChanged;
             cmbLoadEntityType.SelectedIndexChanged += CmbLoadEntityType_SelectedIndexChanged;
 
-            // --- státuszmező formázás ---
-            txtStatus.Font = new Font("Segoe UI", 10, FontStyle.Regular);
-            txtStatus.ForeColor = Color.Black;
-
-            // --- JSON mező formázás ---
-            txtJson.Font = new Font("Consolas", 9);
+            // A verzió a csprojból jön, hogy egy hibajelentésből kiderüljön, melyik példány futott.
+            this.Text = $"SmartPage Duplicate {AppVersion}";
+            lblVersion.Text = AppVersion;
 
             // --- Set focus to Load server combo on startup ---
             cmbServerLoad.Focus();

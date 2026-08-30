@@ -1,7 +1,7 @@
 using System;
 using System.Windows.Forms;
 
-namespace SmartpageTimetableDuplicateV1
+namespace SmartPageDuplicate
 {
     internal static class Program
     {

@@ -4,7 +4,7 @@ using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
 
-namespace SmartpageTimetableDuplicateV1
+namespace SmartPageDuplicate
 {
     /// <summary>Egy választható sor: azonosító, név és egy típusfüggő kiegészítő oszlop.</summary>
     public record PickerRow(int Id, string Name, string Extra);

@@ -2,7 +2,7 @@ using System;
 using System.IO;
 using System.Text;
 
-namespace SmartpageTimetableDuplicateV1
+namespace SmartPageDuplicate
 {
     /// <summary>
     /// Fájlba írt művelet-napló. A státuszmező tartalma az ablak bezárásával elveszik, így ma
@@ -43,7 +43,7 @@ namespace SmartpageTimetableDuplicateV1
             {
                 string root = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "DuplicateTT", "logs");
+                    "SmartPageDuplicate", "logs");
                 System.IO.Directory.CreateDirectory(root);
                 string payloads = Path.Combine(root, "payloads");
                 System.IO.Directory.CreateDirectory(payloads);
@@ -62,7 +62,7 @@ namespace SmartpageTimetableDuplicateV1
         }
 
         private static string CurrentLogFile()
-            => Path.Combine(_logDirectory!, $"duplicatett-{DateTime.Now:yyyy-MM-dd}.log");
+            => Path.Combine(_logDirectory!, $"smartpageduplicate-{DateTime.Now:yyyy-MM-dd}.log");
 
         private static void Write(string line)
         {

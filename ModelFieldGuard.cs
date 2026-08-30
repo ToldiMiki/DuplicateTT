@@ -5,7 +5,7 @@ using System.Reflection;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
-namespace SmartpageTimetableDuplicateV1
+namespace SmartPageDuplicate
 {
     /// <summary>
     /// Összeveti a szerver nyers válaszát a modellosztályokkal, és jelzi azokat a mezőket,
@@ -103,6 +103,6 @@ namespace SmartpageTimetableDuplicateV1
 
         private static bool IsModelType(Type type)
             => type.Namespace != null
-               && type.Namespace.StartsWith("SmartpageTimetableDuplicateV1.Models", StringComparison.Ordinal);
+               && type.Namespace.StartsWith("SmartPageDuplicate.Models", StringComparison.Ordinal);
     }
 }

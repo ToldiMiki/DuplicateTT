@@ -1,11 +1,11 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
-using SmartpageTimetableDuplicateV1;
-using SmartpageTimetableDuplicateV1.Models;
+using SmartPageDuplicate;
+using SmartPageDuplicate.Models;
 using Xunit;
 
-namespace DuplicateTT.Tests;
+namespace SmartPageDuplicate.Tests;
 
 /// <summary>
 /// A modellek oda-vissza alakításának tesztjei. Ez az a pont, ahol a csendes adatvesztések
