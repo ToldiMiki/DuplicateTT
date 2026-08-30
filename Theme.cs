@@ -61,6 +61,14 @@ namespace SmartPageDuplicate
         /// <summary>Száraz futtatás: a szokásostól eltérő üzemmód jelzése.</summary>
         internal static readonly Color DryRun = FromHex(0x0891B2);
 
+        // --- a HC Linear jelkép három négyzete ----------------------------------------
+        // A cég logójának felső eleme (lásd hclinear.hu favicon). A középső négyzet a
+        // háttérhez igazodik: sötét alapon fehér, világos alapon a sötét márkaszín.
+
+        internal static readonly Color MarkGreen = FromHex(0x66B331);
+        internal static readonly Color MarkBlue = FromHex(0x1B9DD9);
+        internal static readonly Color MarkDark = FromHex(0x232323);
+
         private static Color FromHex(int rgb)
             => Color.FromArgb((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF);
     }

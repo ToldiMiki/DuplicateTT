@@ -23,6 +23,7 @@ namespace SmartPageDuplicate
         private const int Margin_ = 14;
         private const int PanelW = 432;         // a két oszlop szélessége
         private const int HeaderH = 66;
+        private const int LogoW = 86;          // a logóblokk szélessége a fejlécben
         private const int LabelW = 92;
         private const int RowH = 30;
         private const int CtrlH = 25;
@@ -87,28 +88,52 @@ namespace SmartPageDuplicate
                 e.Graphics.FillRectangle(brush, 0, pnlHeader.Height - 3, pnlHeader.Width, 3);
             };
 
+            // A HC Linear jelkép: három négyzet, alatta a cégnév - a logó felépítését követve.
+            // Kódból rajzolva, hogy átlátszó maradjon és a kijelzőskálázást is kövesse.
+            pnlLogo = new Panel
+            {
+                Location = new Point(Margin_, 12),
+                Size = new Size(LogoW, HeaderH - 24),
+                BackColor = Color.Transparent
+            };
+            pnlLogo.Paint += (s, e) =>
+            {
+                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                const int box = 11, gap = 5;
+                Color[] colors = { Theme.MarkGreen, Color.White, Theme.MarkBlue };
+                for (int i = 0; i < 3; i++)
+                {
+                    using var brush = new SolidBrush(colors[i]);
+                    e.Graphics.FillRectangle(brush, i * (box + gap), 0, box, box);
+                }
+                using var font = UiFont(11.5F, FontStyle.Bold);
+                using var text = new SolidBrush(Color.White);
+                e.Graphics.DrawString("HC Linear", font, text, -2, box + 5);
+            };
+
             lblAppName = new Label
             {
-                Text = "SmartPage Duplicate",
+                Text = "SmartPage – másolás / duplikálás",
                 Font = UiFont(14F, FontStyle.Regular),
                 ForeColor = Color.White,
                 BackColor = Color.Transparent,
                 // A magasságnak bőven a betűméret fölött kell lennie: 125%-os kijelzőskálázáson
                 // a szoros keret levágja a lelógó szárakat.
-                Location = new Point(Margin_, 8),
-                Size = new Size(340, 30),
+                Location = new Point(Margin_ + LogoW + 18, 8),
+                Size = new Size(430, 30),
                 TextAlign = ContentAlignment.MiddleLeft
             };
 
             lblAppSubtitle = new Label
             {
-                Text = "Menetrend és elrendezés másolása Smartpage szerverek között",
+                Text = "Menetrendi táblák és/vagy Slide layout-ok duplikálása szerveren belül, vagy másolása szerverek között",
                 Font = UiFont(8.5F),
                 // A fehér 70%-os keveréke a márkaszínnel: olvasható, de nem versenyez a címmel.
                 ForeColor = Color.FromArgb(178, 205, 216),
                 BackColor = Color.Transparent,
-                Location = new Point(Margin_ + 2, 40),
-                Size = new Size(520, 18)
+                Location = new Point(Margin_ + LogoW + 20, 40),
+                // A teljes alcím elfér: a verziócímke a cím sorába került, nem alá.
+                Size = new Size(pnlHeader.Width - (Margin_ + LogoW + 20) - Margin_, 18)
             };
 
             lblVersion = new Label
@@ -120,9 +145,9 @@ namespace SmartPageDuplicate
                 TextAlign = ContentAlignment.MiddleRight,
                 Anchor = AnchorStyles.Top | AnchorStyles.Right
             };
-            lblVersion.Location = new Point(pnlHeader.Width - 120 - Margin_, 24);
+            lblVersion.Location = new Point(pnlHeader.Width - 120 - Margin_, 14);
 
-            pnlHeader.Controls.AddRange(new Control[] { lblAppName, lblAppSubtitle, lblVersion });
+            pnlHeader.Controls.AddRange(new Control[] { pnlLogo, lblAppName, lblAppSubtitle, lblVersion });
             this.Controls.Add(pnlHeader);
         }
 
@@ -252,12 +277,44 @@ namespace SmartPageDuplicate
         {
             int top = HeaderH + Margin_ + grpSource.Height + Margin_;
             int fullW = this.ClientSize.Width - Margin_ * 2;
+            int fullH = this.ClientSize.Height - top - Margin_;
 
-            lblJsonCaption = MakeCaption("JSON előnézet", Margin_, top);
+            // A JSON-előnézet és a napló egymás rovására húzható: a köztük lévő csík fogható.
+            splitOutput = new SplitContainer
+            {
+                Location = new Point(Margin_, top),
+                Size = new Size(fullW, fullH),
+                Orientation = Orientation.Horizontal,
+                BackColor = Ground,
+                SplitterWidth = 8,
+                // Egyik oldal se tűnhessen el teljesen: a felirat és néhány sor mindig maradjon.
+                Panel1MinSize = 90,
+                Panel2MinSize = 90,
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom
+            };
+            // Fogópont-jelzés a csíkon, hogy látszódjon: ez húzható.
+            splitOutput.Paint += (s, e) =>
+            {
+                Rectangle r = splitOutput.SplitterRectangle;
+                using var line = new SolidBrush(Theme.Rule);
+                e.Graphics.FillRectangle(line, r.Left, r.Top + r.Height / 2, r.Width, 1);
+
+                using var dot = new SolidBrush(Theme.InkSoft);
+                int cx = r.Left + r.Width / 2, cy = r.Top + r.Height / 2;
+                for (int i = -2; i <= 2; i++)
+                {
+                    e.Graphics.FillRectangle(dot, cx + i * 8 - 1, cy - 1, 3, 3);
+                }
+            };
+            // Az egérmutató is jelezze, hogy a csík fogható.
+            splitOutput.MouseEnter += (s, e) => splitOutput.Cursor = Cursors.HSplit;
+
+            lblJsonCaption = MakeCaption("JSON előnézet", 0, 0);
+            lblJsonCaption.Location = new Point(2, 0);
+
             txtJson = new TextBox
             {
-                Location = new Point(Margin_, top + 20),
-                Size = new Size(fullW, 300),
+                Location = new Point(0, 18),
                 Multiline = true,
                 ReadOnly = true,
                 BackColor = Surface,
@@ -271,24 +328,30 @@ namespace SmartPageDuplicate
                 MaxLength = int.MaxValue,
                 Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom
             };
+            txtJson.Size = new Size(fullW, splitOutput.Panel1.Height - 18);
 
-            int statusTop = top + 20 + 300 + Margin_;
-            lblStatusCaption = MakeCaption("Napló", Margin_, statusTop);
-            lblStatusCaption.Anchor = AnchorStyles.Left | AnchorStyles.Bottom;
+            lblStatusCaption = MakeCaption("Napló", 0, 0);
+            lblStatusCaption.Location = new Point(2, 2);
 
             txtStatus = new RichTextBox
             {
-                Location = new Point(Margin_, statusTop + 20),
-                Size = new Size(fullW, this.ClientSize.Height - (statusTop + 20) - Margin_),
+                Location = new Point(0, 20),
                 ReadOnly = true,
                 BackColor = Surface,
                 BorderStyle = BorderStyle.FixedSingle,
                 Font = UiFont(9.5F),
                 ScrollBars = RichTextBoxScrollBars.Both,
-                Anchor = AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom
+                Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right | AnchorStyles.Bottom
             };
+            txtStatus.Size = new Size(fullW, splitOutput.Panel2.Height - 20);
 
-            this.Controls.AddRange(new Control[] { lblJsonCaption, txtJson, lblStatusCaption, txtStatus });
+            splitOutput.Panel1.Controls.AddRange(new Control[] { lblJsonCaption, txtJson });
+            splitOutput.Panel2.Controls.AddRange(new Control[] { lblStatusCaption, txtStatus });
+            this.Controls.Add(splitOutput);
+
+            // A kiinduló osztás: a JSON kapja a nagyobb részt. A SplitterDistance csak akkor
+            // állítható be helyesen, ha a vezérlő már a formon van és ismeri a méretét.
+            splitOutput.SplitterDistance = (int)(fullH * 0.62);
         }
 
         // ------------------------------------------------------------------ építőelemek
@@ -379,6 +442,7 @@ namespace SmartPageDuplicate
         #endregion
 
         private Panel pnlHeader;
+        private Panel pnlLogo;
         private Label lblAppName;
         private Label lblAppSubtitle;
         private Label lblVersion;
@@ -405,6 +469,7 @@ namespace SmartPageDuplicate
         private CheckBox chkDryRun;
         private Button btnSave;
 
+        private SplitContainer splitOutput;
         private Label lblJsonCaption;
         private TextBox txtJson;
         private Label lblStatusCaption;
