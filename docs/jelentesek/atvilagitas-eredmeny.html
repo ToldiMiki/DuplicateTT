@@ -1,0 +1,390 @@
+<title>DuplicateTT átvilágítás</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground:#F4F5F6; --surface:#FFFFFF; --surface-2:#EDEFF1;
+    --ink:#16181A; --ink-2:#4A4F55; --ink-3:#7C838B;
+    --rule:#D9DDE1; --rule-2:#C3C9CF;
+    --accent:#8F6200; --accent-2:#6E4B00; --accent-soft:#F3E6C8;
+    --crit:#A32C1E; --ok:#2F6B4F; --ok-soft:#E3EFE8;
+    --display:"Barlow Condensed","Arial Narrow",sans-serif;
+    --body:"Barlow","Segoe UI",system-ui,sans-serif;
+    --mono:"IBM Plex Mono","Consolas",ui-monospace,monospace;
+    --measure:68ch; --pad:clamp(20px,5vw,56px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:#131517; --surface:#1B1E21; --surface-2:#232729;
+      --ink:#E8EAEC; --ink-2:#A8AFB6; --ink-3:#79818A;
+      --rule:#2C3136; --rule-2:#3A4046;
+      --accent:#E2A93B; --accent-2:#F0C06A; --accent-soft:#3A2F14;
+      --crit:#E0715F; --ok:#6FBF95; --ok-soft:#1C2A23;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#131517; --surface:#1B1E21; --surface-2:#232729;
+    --ink:#E8EAEC; --ink-2:#A8AFB6; --ink-3:#79818A;
+    --rule:#2C3136; --rule-2:#3A4046;
+    --accent:#E2A93B; --accent-2:#F0C06A; --accent-soft:#3A2F14;
+    --crit:#E0715F; --ok:#6FBF95; --ok-soft:#1C2A23;
+  }
+  * { box-sizing:border-box; }
+  body { background:var(--ground); color:var(--ink); font-family:var(--body); font-size:16.5px; line-height:1.62; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1080px; margin:0 auto; padding:0 var(--pad) 96px; }
+
+  header.masthead { padding:clamp(40px,7vw,84px) 0 0; display:flex; flex-direction:column; gap:22px; }
+  .eyebrow { font-family:var(--mono); font-size:11.5px; letter-spacing:0.14em; text-transform:uppercase; color:var(--ink-3); display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  .eyebrow .dot { color:var(--rule-2); }
+  .eyebrow .live { color:var(--ok); }
+  h1 { font-family:var(--display); font-weight:700; font-size:clamp(40px,7.5vw,76px); line-height:0.98; letter-spacing:-0.015em; margin:0; text-wrap:balance; }
+  .standfirst { max-width:var(--measure); font-size:clamp(17px,2.1vw,19.5px); line-height:1.55; color:var(--ink-2); margin:0; }
+
+  .stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:1px; background:var(--rule); border:1px solid var(--rule); margin-top:14px; }
+  .stat { background:var(--surface); padding:16px 18px 18px; display:flex; flex-direction:column; gap:3px; }
+  .stat b { font-family:var(--display); font-weight:700; font-size:34px; line-height:1; letter-spacing:-0.01em; font-variant-numeric:tabular-nums; }
+  .stat.good b { color:var(--ok); }
+  .stat span { font-family:var(--mono); font-size:10.5px; letter-spacing:0.09em; text-transform:uppercase; color:var(--ink-3); }
+
+  section { margin-top:clamp(52px,8vw,88px); }
+  .sec-head { display:flex; align-items:baseline; gap:14px; border-bottom:2px solid var(--ink); padding-bottom:9px; margin-bottom:26px; }
+  .sec-head h2 { font-family:var(--display); font-weight:600; font-size:clamp(25px,3.4vw,33px); line-height:1.05; letter-spacing:-0.01em; margin:0; }
+  .sec-head .count { font-family:var(--mono); font-size:11px; letter-spacing:0.08em; color:var(--ink-3); margin-left:auto; white-space:nowrap; }
+
+  p { max-width:var(--measure); }
+  section > p { margin:0 0 15px; }
+  h3 { font-family:var(--display); font-weight:600; font-size:21px; margin:30px 0 10px; }
+  code { font-family:var(--mono); font-size:0.855em; background:var(--surface-2); padding:1px 5px; border-radius:2px; color:var(--ink-2); word-break:break-word; }
+  strong { font-weight:600; color:var(--ink); }
+  em { font-style:italic; }
+
+  .note { background:var(--surface); border:1px solid var(--rule); border-left:3px solid var(--accent); padding:18px 22px 20px; margin:24px 0; }
+  .note h4 { font-family:var(--mono); font-size:10.5px; letter-spacing:0.12em; text-transform:uppercase; color:var(--accent); margin:0 0 10px; }
+  .note p { margin:0 0 10px; font-size:15.5px; color:var(--ink-2); }
+  .note p:last-child { margin-bottom:0; }
+
+  /* fázisok */
+  .phase { display:grid; grid-template-columns:74px 1fr; gap:0 22px; padding:22px 0 24px; border-top:1px solid var(--rule); }
+  .phase:last-of-type { border-bottom:1px solid var(--rule); }
+  .phase-num { font-family:var(--display); font-weight:700; font-size:40px; line-height:0.85; color:var(--ok); font-variant-numeric:tabular-nums; }
+  .phase-num small { display:block; font-family:var(--mono); font-size:9px; font-weight:400; letter-spacing:0.06em; color:var(--ink-3); margin-top:8px; line-height:1.4; }
+  .phase-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:6px; }
+  .phase-head h3 { font-family:var(--display); font-size:24px; font-weight:600; margin:0; }
+  .done { font-family:var(--mono); font-size:10px; letter-spacing:0.08em; color:var(--ok); background:var(--ok-soft); padding:3px 7px 2px; box-shadow:inset 0 0 0 1px var(--ok); }
+  .phase p { font-size:15.5px; color:var(--ink-2); margin:0 0 10px; }
+  .phase ul { margin:0; padding-left:18px; }
+  .phase li { font-size:15px; line-height:1.5; margin-bottom:5px; color:var(--ink-2); }
+  .phase li::marker { color:var(--rule-2); }
+  @media (max-width:620px) { .phase { grid-template-columns:1fr; gap:10px; } .phase-num { font-size:28px; display:flex; align-items:baseline; gap:10px; } .phase-num small { margin-top:0; } }
+
+  /* leletek tábla */
+  .tablewrap { overflow-x:auto; border:1px solid var(--rule); margin-top:20px; }
+  table { border-collapse:collapse; width:100%; min-width:560px; background:var(--surface); }
+  th, td { text-align:left; padding:8px 13px; border-bottom:1px solid var(--rule); font-size:14.5px; vertical-align:top; }
+  th { font-family:var(--mono); font-size:10.5px; letter-spacing:0.09em; text-transform:uppercase; color:var(--ink-3); font-weight:400; background:var(--surface-2); }
+  tr:last-child td { border-bottom:none; }
+  td.id { font-family:var(--mono); font-size:12px; color:var(--accent); white-space:nowrap; }
+  td.num { font-family:var(--mono); font-variant-numeric:tabular-nums; color:var(--ink-2); white-space:nowrap; }
+  td.name { font-family:var(--mono); font-size:12.5px; }
+  .tick { color:var(--ok); font-weight:600; }
+  .partial { color:var(--accent); font-weight:600; }
+
+  /* mutáció */
+  .mutation { background:var(--ok-soft); border-left:3px solid var(--ok); padding:14px 18px; margin-top:18px; font-family:var(--mono); font-size:12.5px; line-height:1.85; overflow-x:auto; white-space:pre; color:var(--ink); }
+
+  footer { margin-top:72px; padding-top:20px; border-top:1px solid var(--rule); font-family:var(--mono); font-size:11.5px; color:var(--ink-3); line-height:1.7; }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">
+      <span>Smartpage · DuplicateTT</span>
+      <span class="dot">/</span>
+      <span class="live">Mind az öt fázis elkészült</span>
+      <span class="dot">/</span>
+      <span>2026-08-29</span>
+    </div>
+    <h1>Átvilágítás és ütemterv</h1>
+    <p class="standfirst">
+      Az eszköz menetrendet és layoutot másol Smartpage szerverek között és szervereken belül.
+      Az átvilágítás 27 hibát talált, ebből hármat olyat, ami <em>csendben</em> veszített adatot:
+      a mentés sikeres volt, a státuszsor zöld, a másolat mégis más. Az alábbi munka ezeket
+      javítja, és beépíti azokat a fékeket, amik miatt a következő ilyen hiba nem maradhat
+      észrevétlen.
+    </p>
+
+    <div class="stats">
+      <div class="stat good"><b>24</b><span>Javított hiba</span></div>
+      <div class="stat good"><b>25</b><span>Teszt</span></div>
+      <div class="stat"><b>5</b><span>Commit</span></div>
+      <div class="stat"><b>54</b><span>Feltérképezett végpont</span></div>
+      <div class="stat"><b>1650</b><span>Sor a MainFormban</span></div>
+    </div>
+  </header>
+
+  <!-- ============ AMI ELKÉSZÜLT ============ -->
+  <section>
+    <div class="sec-head">
+      <h2>Ami elkészült</h2>
+      <span class="count">fázisonként</span>
+    </div>
+    <p>
+      A fázisok sorrendje függőség volt, nem preferencia: a 0. nélkül a többit nem lehetett volna
+      biztonságosan ellenőrizni, az 1. nélkül a kényelmi funkciók csak gyorsabban gyártottak volna
+      hibás másolatokat.
+    </p>
+
+    <div class="phase">
+      <div class="phase-num">0<small>06633b5<br>428a9e3</small></div>
+      <div>
+        <div class="phase-head"><h3>Biztonsági háló</h3><span class="done">KÉSZ</span></div>
+        <p>Mielőtt bármit átírtunk volna: legyen mód végigfuttatni a másolást anélkül, hogy a szerverre írnánk.</p>
+        <ul>
+          <li><strong>Száraz futtatás:</strong> minden lefut a POST-ig — fordítás, figyelmeztetések, végleges JSON —, de nem küld.</li>
+          <li><strong>Napló fájlba</strong> a <code>%LOCALAPPDATA%\DuplicateTT\logs</code> alatt, csonkítatlan JSON-nal; a nagy törzsek külön fájlba.</li>
+          <li><strong>API-referencia</strong> (<code>docs/smartpage-api.md</code>) — méréssel, mert a Swagger 500-at ad.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="phase-num">1<small>428a9e3</small></div>
+      <div>
+        <div class="phase-head"><h3>Adathűség</h3><span class="done">KÉSZ</span></div>
+        <p>A három csendes adatvesztés, plusz a mezőőr, ami a következőt elfogja.</p>
+        <ul>
+          <li><strong>delayThreshold</strong> felvéve a cellamodellbe; a másolt tábla eddig máskor jelzett késést, mint az eredeti.</li>
+          <li><strong>Announcement.items</strong> a nem létező <code>textAnnouncements</code> helyett.</li>
+          <li><strong>A raszterfont-fordítás</strong> ténylegesen ír: az értékadás egy soha nem teljesülő feltétel mögött állt.</li>
+          <li><strong>Négy lefordítatlan hivatkozás</strong> (kép, rács, menetrend, font) most név szerint fordul.</li>
+          <li><strong>Mezőőr:</strong> reflexióval összeveti a választ a modellel, és felugró ablakban kérdez, ha ismeretlen mezőt talál.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="phase-num">2<small>428a9e3</small></div>
+      <div>
+        <div class="phase-head"><h3>Ne hagyjon szemetet</h3><span class="done">KÉSZ</span></div>
+        <p>A megszakadt mentés ne hagyjon félkész layoutot, és a hibaüzenet mondja meg, mit kell tenni.</p>
+        <ul>
+          <li><strong>Visszavonás:</strong> az elemek fordítása megelőzi a fejléc mentését, így a döntés az írás elé kerül. Ha az elem-mentés mégis elbukik, a <code>layout/remove</code> takarít.</li>
+          <li><strong>A szerver magyar hibái kibontva</strong> — az <code>elements[1].imageId</code> mezőnév elemnévre feloldva.</li>
+          <li><strong>A 401 külön üzenetet kap</strong> („a munkamenet lejárt"), a nyers HTML VPN-figyelmeztetést.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="phase-num">3<small>68e0cca</small></div>
+      <div>
+        <div class="phase-head"><h3>Használható felület</h3><span class="done">KÉSZ</span></div>
+        <p>A másolás megbízható lett; itt vált gyorssá is. A hangsúly a mentés előtti átláthatóságon.</p>
+        <ul>
+          <li><strong>Elemválasztó:</strong> a 357 layout és 27 menetrend névre szűrhető listából, kézi azonosító-beírás helyett.</li>
+          <li><strong>Előnézet mentés előtt:</strong> honnan hova, milyen néven, mi fordul át, mi marad ki — egy képernyőn. A fókusz a Mégse gombon indul.</li>
+          <li><strong>Névütközés-ellenőrzés</strong> szabad név javaslatával; a szerver megköveteli az egyediséget.</li>
+          <li>A JSON-néző 32 767 karakteres néma csonkítása megszűnt.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="phase-num">4<small>29d1758</small></div>
+      <div>
+        <div class="phase-head"><h3>Kép és megálló-kötés</h3><span class="done">KÉSZ</span></div>
+        <p>A másolat két dolgot nem vitt magával: a képeket és a megállóhoz kötést. Az utóbbi miatt sehol nem jelent meg.</p>
+        <ul>
+          <li><strong>Képátvitel:</strong> ha a név megvan a célon, azonosító-fordítás; ha nincs, feltöltés a forrásból. A menetrend háttérképére is.</li>
+          <li><strong>Megálló-kötés (slide):</strong> a megálló és az állapot név szerint fordítva — csak szerverek között, duplikáláskor nem.</li>
+          <li><strong>Hiányzó font:</strong> a művelet el sem indul, egy világos listával arról, mit kell kézzel feltölteni.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="phase">
+      <div class="phase-num">5<small>e43e580</small></div>
+      <div>
+        <div class="phase-head"><h3>Hogy ne romoljon vissza</h3><span class="done">KÉSZ</span></div>
+        <p>A csendes hibák azért maradtak észrevétlenek, mert az érintett kód nem volt tesztelhető.</p>
+        <ul>
+          <li><strong>A fordítás külön osztályba került</strong> (<code>Copy/CopyTranslator</code>): se felület, se hálózat. Bemenet a nyers JSON és a két névtábla, kimenet a módosított JSON és egy jelentés.</li>
+          <li><strong>25 teszt</strong>, mindegyik egy konkrét mért hibához kötve, valós PROD2 azonosítókkal.</li>
+          <li>A <code>MainForm</code> 1902 → 1650 sor.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ MUTÁCIÓ ============ -->
+  <section>
+    <div class="sec-head">
+      <h2>A tesztek bizonyítása</h2>
+      <span class="count">mutációs próba</span>
+    </div>
+    <p>
+      Egy zöld teszt önmagában semmit nem bizonyít — attól még lehet, hogy a hiba jelenlétében is
+      lefutna. Ezért minden javítást ideiglenesen visszavettem, és megnéztem, hogy a hozzá tartozó
+      teszt tényleg elbukik-e:
+    </p>
+
+    <div class="mutation">Trim eltávolítása a névpárosításból        → 1 teszt elbukott
+delayThreshold kivétele a modellből        → 1 teszt elbukott
+items visszanevezése textAnnouncements-re  → 1 teszt elbukott
+a 0-s kulcs újra "nincs találat"           → 1 teszt elbukott
+a rács fordításának kihagyása              → 2 teszt elbukott
+módosítás a bejárás közben                 → 1 teszt elbukott</div>
+
+    <p style="margin-top:16px">
+      Mind a hat elbukott, majd a visszaállítás után mind a 25 teszt újra zöld lett. A tesztek
+      tehát valóban a hibát fogják.
+    </p>
+  </section>
+
+  <!-- ============ LELETEK ============ -->
+  <section>
+    <div class="sec-head">
+      <h2>A 27 lelet állása</h2>
+      <span class="count">24 javítva · 1 részben · 2 nem hiba</span>
+    </div>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>#</th><th>Lelet</th><th>Állapot</th></tr></thead>
+        <tbody>
+          <tr><td class="id">H1</td><td>A közlemény elemei kiestek a másolatból</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H2</td><td>A késésküszöb eltűnt minden menetrend-másolatból</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H3</td><td>A raszterfont-fordítás soha nem írta vissza az eredményt</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H4</td><td>Négy hivatkozás fordítás nélkül ment át</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H5</td><td>A félbeszakadt mentés szemetet hagyott</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H6</td><td>A lejárt token nem volt érthető hibaként látható</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H7</td><td>Beégetett 10 000-es azonosító-küszöb</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H8</td><td>A „nincs találat" jelzése a 0-s érték volt</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H9</td><td>A JSON-néző némán csonkított</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H10</td><td>Az azonosítót kézzel kellett begépelni</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H11</td><td>A Mentés gomb azonnal írt</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H12</td><td>A Load szerver felülírta a Save szervert</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H13</td><td>Nem volt névütközés-ellenőrzés</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H14</td><td>A napló az ablak bezárásával elveszett</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H15</td><td>Egyetlen osztály vitt mindent</td><td class="partial">részben</td></tr>
+          <tr><td class="id">H16</td><td>Nem volt egyetlen automata teszt sem</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H17</td><td>A fejlesztői leírás négy ponton téves volt</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H18</td><td>Iteráció közbeni módosítás a JSON-fán</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H19</td><td>A base64 legenerálódott, hogy aztán kivágjuk</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H20</td><td>A jelszó levágott szóközökkel ment</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H21</td><td>A HttpClientHandler nem szabadult fel</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H22</td><td>Nem volt verzió a címsorban</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H23</td><td>A szerver magyar hibái nyersen jelentek meg</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H24</td><td>Minden másolás új közleményt hoz létre</td><td>szándékos</td></tr>
+          <tr><td class="id">H25</td><td>Az <code>element/save/all</code> teljes cserét végez</td><td>dokumentálva</td></tr>
+          <tr><td class="id">H26</td><td>A megálló-kötés nem követte a másolatot</td><td class="tick">javítva</td></tr>
+          <tr><td class="id">H27</td><td>A névpárosítás elbukott záró szóközön</td><td class="tick">javítva</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <h4>Ami kimaradt</h4>
+      <p>
+        A <strong>H15</strong> fele: a fordítás kikerült egy tesztelhető osztályba, de a HTTP-hívások
+        továbbra is a <code>MainForm</code>-ban vannak, nem a <code>SmartpageApiClient</code>-ben.
+      </p>
+      <p>
+        Ezt tudatosan hagytam el. Nem old meg egyetlen hibát sem, viszont újabb nagy mozgatás lenne
+        ugyanabban a fájlban — épp azután, hogy egy elhamarkodott törlőszkript már egyszer
+        megrongálta. A tesztelhetőség, ami miatt a refaktor indult, a fordító kiemelésével megvan.
+      </p>
+    </div>
+  </section>
+
+  <!-- ============ AMIT A MÉRÉS FELÜLÍRT ============ -->
+  <section>
+    <div class="sec-head">
+      <h2>Amit a mérés felülírt</h2>
+      <span class="count">három korrekció</span>
+    </div>
+    <p>
+      Az első elemzés kódolvasáson alapult. A PROD2 homokozóban végzett mérés három állításomat
+      írta felül — mindhárom a javításokat is érintette.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Amit írtam</th><th>Amit a mérés mutatott</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>A lefordítatlan azonosítók „csendben törött hivatkozást" okoznak.</td>
+            <td>A szerver <strong>validál</strong>: nem létező azonosítóra 422-t ad. A valódi kockázat az, ha az azonosító a célon <em>létezik, de mást jelöl</em> — akkor a mentés sikerül, és a másolat idegen képet kap.</td>
+          </tr>
+          <tr>
+            <td>A <code>layout/remove</code> kaszkádol az elemekre és a slide-okra.</td>
+            <td>Csak az <strong>elemekre</strong>. Slide jelenlétében 422: <em>„A kiválaszott elrendezés nem törölhető, mert hozzá van rendelve diához!"</em> A visszavonás ezért előbb a kötéseket bontja el.</td>
+          </tr>
+          <tr>
+            <td>A feltöltött kép byte-azonos az eredetivel.</td>
+            <td>Csak akkor, ha a forrás már 8 bites. A szerver <strong>újrakódol</strong>: egy 4 bites palettás PNG 8 bitesként jön vissza. A tartalom nem sérül, de byte-azonosságra nem szabad építeni.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ============ API ============ -->
+  <section>
+    <div class="sec-head">
+      <h2>A backend API</h2>
+      <span class="count">54 végpont · dokumentáció nélkül</span>
+    </div>
+    <p>
+      A Swagger és a <code>v3/api-docs</code> egyaránt 500-at ad, dokumentáció nincs. A térkép két
+      nem destruktív trükkel készült: az <code>OPTIONS</code> visszaadja az <code>Allow</code>
+      fejlécet, a hibaüzenet pedig megkülönbözteti a nem létező útvonalat a rossz metódustól.
+      457 útvonalat próbáltam végig, egyetlen írás nélkül.
+    </p>
+    <p>
+      Az eredmény a repóban van (<code>docs/smartpage-api.md</code>): végponttérkép entitásonként,
+      a 422-es hibaformátum a visszatérő magyar üzenetekkel, hét kikényszerített üzleti szabály,
+      a modellekből hiányzó mezők, és maga a felderítési módszer — hogy megismételhető legyen.
+    </p>
+
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Entitás</th><th>Darab</th><th>Névütközés</th><th>Megjegyzés</th></tr></thead>
+        <tbody>
+          <tr><td class="name">layout</td><td class="num">357</td><td class="num">0</td><td>294-nek van megálló-kötése</td></tr>
+          <tr><td class="name">dynamic-timetable</td><td class="num">27</td><td class="num">0</td><td>—</td></tr>
+          <tr><td class="name">image</td><td class="num">444</td><td class="num">0</td><td>5,24 MB, base64 tartalommal</td></tr>
+          <tr><td class="name">slide</td><td class="num">455</td><td class="num">—</td><td>megálló ↔ layout kapcsolat</td></tr>
+          <tr><td class="name">raster-font</td><td class="num">87</td><td class="num">0</td><td>tartalma nem olvasható ki</td></tr>
+          <tr><td class="name">announcement</td><td class="num">23</td><td class="num">0</td><td>minden <code>items</code> üres</td></tr>
+          <tr><td class="name">state</td><td class="num">15</td><td class="num">0</td><td>nevesített feltételek</td></tr>
+          <tr><td class="name">stop</td><td class="num">69</td><td class="num">0</td><td>—</td></tr>
+          <tr><td class="name">grid</td><td class="num">9</td><td class="num">0</td><td>—</td></tr>
+          <tr><td class="name">group</td><td class="num">9</td><td class="num">0</td><td>—</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <h4>A homokozó megszűnik</h4>
+      <p>
+        Minden mérés, amire ez a munka épül, a PROD2-ről származik: a végponttérkép, az üzleti
+        szabályok, a tesztek azonosítói. A szerver rövidesen törlésre kerül.
+      </p>
+      <p>
+        A tudás a repóban marad, de ha lesz új homokozó, érdemes újrafuttatni a felderítést — a
+        módszer a dokumentáció 7. fejezetében van, és egyetlen írást sem igényel. A munka során
+        létrehozott összes teszt-objektum vissza lett takarítva; a listák pontosan a kiindulási
+        darabszámon állnak.
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    Az adatok forrása a smartpage2.hclinear.hu (PROD2) szerver, 2026-08-29-i állapot, a PROD és
+    DEMO szerverek olvasó összevetésével kiegészítve. Az író vizsgálat a tulajdonos által
+    homokozónak nyilvánított környezetben zajlott, visszatakarítva. A munka a
+    <code>fix/masolas-adathuseg</code> ágon, öt commitban.
+  </footer>
+
+</div>
